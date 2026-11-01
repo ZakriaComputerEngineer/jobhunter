@@ -1,0 +1,71 @@
+{
+  "template": "ml.docx",
+  "headline_idx": 1,
+  "headline": "Machine Learning Engineer",
+  "sections": [
+    {
+      "heading": "SUMMARY",
+      "src": 3,
+      "blocks": [
+        {
+          "t": "para",
+          "text": "Software engineer with experience building reliable services, data products, and practical automation. Replace this fictional content with your own verified experience before applying.",
+          "proto": 4
+        }
+      ]
+    },
+    {
+      "heading": "EXPERIENCE",
+      "src": 5,
+      "blocks": [
+        {
+          "t": "header",
+          "text": "**Software Engineer | Example Labs** | 2023–Present",
+          "proto": 6
+        },
+        {
+          "t": "bullet",
+          "text": "Built maintainable services and automated repeatable workflows with measurable quality checks.",
+          "proto": 7
+        },
+        {
+          "t": "bullet",
+          "text": "Collaborated with product and engineering partners to deliver documented, tested features.",
+          "proto": 8
+        },
+        {
+          "t": "header",
+          "text": "**Engineering Intern | Sample Systems** | 2022–2023",
+          "proto": 9
+        },
+        {
+          "t": "bullet",
+          "text": "Created internal tools and improved test coverage for a fictional sample project.",
+          "proto": 10
+        }
+      ]
+    },
+    {
+      "heading": "EDUCATION",
+      "src": 11,
+      "blocks": [
+        {
+          "t": "header",
+          "text": "**BSc, Computer Science | Sample University** | 2022",
+          "proto": 12
+        }
+      ]
+    },
+    {
+      "heading": "SKILLS",
+      "src": 13,
+      "blocks": [
+        {
+          "t": "para",
+          "text": "Python, machine learning, data pipelines, evaluation, APIs, SQL",
+          "proto": 14
+        }
+      ]
+    }
+  ]
+}

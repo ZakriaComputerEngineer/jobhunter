@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "JobHunter Apply Helper",
+  "version": "1.0.4",
+  "description": "Lets your local JobHunter app fill job applications in a new tab of your own browser (your logins). Talks only to localhost:8765.",
+  "permissions": ["tabs", "scripting", "storage", "alarms", "webNavigation"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "sw.js" },
+  "action": { "default_title": "JobHunter Apply Helper — open JobHunter", "default_icon": { "16": "icon16.png", "48": "icon48.png", "128": "icon128.png" } },
+  "icons": { "16": "icon16.png", "48": "icon48.png", "128": "icon128.png" }
+}

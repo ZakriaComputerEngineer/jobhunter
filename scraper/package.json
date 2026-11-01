@@ -1,0 +1,7 @@
+{
+  "name": "jobhunter-scraper",
+  "private": true,
+  "type": "module",
+  "description": "Playwright scraper for JobHunter (uses your installed Chrome/Edge, no browser download)",
+  "dependencies": { "playwright-core": "^1.48.0" }
+}
