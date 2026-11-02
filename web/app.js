@@ -562,6 +562,9 @@ async function applyPoll() {
   if (s && s.alive && s.status === 'needs_input') {
     notifyNeed(s);
     bar.innerHTML = `<div class="ab"><span class="dot live"></span><b>Your input needed</b><span style="flex:1">${esc(s.job.company)} · ${esc(s.need.message)}</span>${s.need.canSubmit ? '<button class="btn sm pri" data-c="submit">Submit for me</button>' : ''}${s.need.reason === 'questions' ? '<a class="btn sm pri" href="#/apply">Answer questions</a>' : '<button class="btn sm pri" data-c="continue">Continue</button>'}<button class="btn sm" data-c="skip">Skip job</button></div>`;
+  } else if (s && s.alive && s.status === 'stopping') {
+    clearInterval(titleBlink); document.title = 'JobHunter';
+    bar.innerHTML = `<div class="ab"><b>⏹ Stopping</b><span style="flex:1" class="small">${esc(s.job.title)} · ${esc(s.job.company)} — the apply flow is shutting down…</span><a class="btn sm" href="#/apply">Open</a></div>`;
   } else if (s && s.alive) {
     clearInterval(titleBlink); document.title = 'JobHunter';
     bar.innerHTML = `<div class="ab run"><span class="spin"></span><b>Applying</b><span style="flex:1" class="small">${esc(s.job.title)} · ${esc(s.job.company)} — ${esc(((s.events || []).filter((e) => e.type === 'log' || e.type === 'page').slice(-1)[0] || {}).msg || ((s.events || []).slice(-1)[0] || {}).title || 'working…')}</span><a class="btn sm" href="#/apply">Open</a></div>`;
@@ -603,7 +606,7 @@ VIEWS.apply = async (_, q) => {
     $('#apHist').innerHTML = st.history.map((h) => `<div class="row small" style="padding:4px 0;border-top:1px solid var(--line)"><span class="pill" style="color:${h.status === 'done' ? 'var(--ok)' : 'var(--muted)'}">${esc(h.status)}</span><span style="flex:1">${esc(h.job.title)} · ${esc(h.job.company)}</span><span class="dim">${rel(h.finished)}</span></div>`).join('') || '<div class="dim small">Nothing yet.</div>';
     if (!s) { $('#apMain').innerHTML = '<div class="card empty"><div class="big">⚡</div>No application running.<br>Open a job and press <b>⚡ Apply for me</b>, or select several on the Jobs page.<br><br><a class="btn" href="#/apply?tab=profile">Complete my application profile first</a></div>'; return; }
     const needKey = s.need ? s.id + s.need_since : null;
-    const evs = (s.events || []).filter((e) => ['log', 'page', 'filled', 'needs_input', 'resumed', 'done', 'error', 'skipped'].includes(e.type)).slice(-80)
+    const evs = (s.events || []).filter((e) => ['log', 'page', 'filled', 'needs_input', 'resumed', 'stop_requested', 'stopped', 'done', 'error', 'skipped'].includes(e.type)).slice(-80)
       .map((e) => `${new Date(e.t).toLocaleTimeString()}  ${e.type === 'page' ? `→ ${e.title || e.url} (${e.fields} fields)` : e.type === 'filled' ? `✎ filled ${e.count}/${e.total} fields${e.unknown ? `, ${e.unknown} unknown` : ''}` : e.type === 'needs_input' ? `⚠ ${e.message}` : e.type === 'resumed' ? `▶ resumed (${e.by})` : e.type === 'done' ? '✅ Application submitted!' : e.msg || e.message || e.type}`).join('\n');
     if (needKey === shownNeed && $('#apLog')) { $('#apLog').textContent = evs; $('#apLog').scrollTop = 1e9; $('#apStatus').innerHTML = statusLine(s); return; }
     shownNeed = needKey;
@@ -614,10 +617,19 @@ VIEWS.apply = async (_, q) => {
         : s.alive ? `<div class="row" style="margin-top:12px"><button class="btn" data-c2="skip">Skip job</button><button class="btn danger" data-c2="stop">Stop</button></div>` : `<div class="row" style="margin-top:12px"><button class="btn" data-c2="stop">Close browser window</button></div>`}
       <h3 style="margin-top:16px">Activity</h3><div class="evlog" id="apLog">${esc(evs)}</div></div>`;
     $('#apLog').scrollTop = 1e9;
-    $$('[data-c2]').forEach((b) => (b.onclick = async () => { await cmd({ cmd: b.dataset.c2 }); }));
+    $$('[data-c2]').forEach((b) => (b.onclick = async () => {
+      const action = b.dataset.c2;
+      if (action === 'stop') {
+        b.disabled = true; b.textContent = 'Stopping…';
+        toast('Stop requested — shutting down the apply flow…', 'okk');
+      }
+      const result = await cmd({ cmd: action });
+      if (action === 'stop' && !result.ok) toast('The apply flow had already stopped.', 'okk');
+      applyPoll();
+    }));
     $('#sendA') && ($('#sendA').onclick = async () => { const answers = {}; $$('[data-fid]').forEach((e) => { if (e.value) answers[e.dataset.fid] = e.value; }); await cmd({ cmd: 'answers', answers, remember: $('#rem').checked }); toast('Answers sent' + ($('#rem').checked ? ' and saved to your answer bank' : ''), 'okk'); shownNeed = null; });
   };
-  const statusLine = (s) => `<span class="pill" style="color:${{ done: 'var(--ok)', needs_input: 'var(--warn)', running: 'var(--brand2)' }[s.status] || 'var(--muted)'}">${esc(s.status.replace('_', ' '))}</span>`;
+  const statusLine = (s) => `<span class="pill" style="color:${{ done: 'var(--ok)', needs_input: 'var(--warn)', stopping: 'var(--warn)', stopped: 'var(--muted)', running: 'var(--brand2)' }[s.status] || 'var(--muted)'}">${esc(s.status.replace('_', ' '))}</span>`;
   window.__applyRender(await api('/api/apply/status'));
 };
 

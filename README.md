@@ -56,6 +56,8 @@ The extension connects the dashboard to the active Chrome/Edge tab. Without it, 
 3. Choose **Load unpacked** and select the repository's `extension` directory.
 4. Keep JobHunter running, refresh the dashboard, and retry **Apply for me**.
 
+When you find a job manually, stay on its posting page, click the JobHunter extension icon, and choose **Apply on this page**. The helper reads available JobPosting metadata, adds or updates the job locally, and runs the same supervised flow in that tab. A detected final submission moves the job into the Applied pipeline. Reload the unpacked extension from `chrome://extensions` or `edge://extensions` after pulling an update.
+
 If the UI reports **Apply Helper is not connected**, confirm that the extension is enabled, the local JobHunter page is open, and both are using the same browser profile. Reload the extension and the dashboard after updating the source.
 
 ## Gmail status sync (no AI required)

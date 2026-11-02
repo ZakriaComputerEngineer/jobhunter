@@ -203,15 +203,38 @@ def job_bulk():
     return jsonify({"ok": True})
 
 
+def _manual_job(d):
+    """Create or enrich a manually discovered job and return its database row."""
+    url = str(d.get("url") or "about:blank").strip()[:4000]
+    old = db.one("SELECT * FROM jobs WHERE url=? ORDER BY id DESC LIMIT 1", (url,)) if url != "about:blank" else None
+    title = str(d.get("title") or (old or {}).get("title") or "Job application").strip()[:300]
+    company = str(d.get("company") or (old or {}).get("company") or "Unknown company").strip()[:200]
+    location = str(d.get("location") or (old or {}).get("location") or "").strip()[:300]
+    description = str(d.get("description") or "").strip()[:50000]
+    if old:
+        description = description if len(description) > len(old.get("description") or "") else (old.get("description") or description)
+        candidate = {**old, "title": title, "company": company, "location": location,
+                     "description": description, "remote": "remote" in location.lower()}
+        e = ingest.enrich(candidate)
+        db.exe("""UPDATE jobs SET title=?,company=?,location=?,description=?,jd_quality=?,country=?,region=?,work_mode=?,
+                  seniority=?,years_req=?,domains=?,match_auto=?,match_ml=?,match=?,best_template=?,missing=?,lang=?,elig=?,elig_reason=?,updated_at=?
+                  WHERE id=?""",
+               (title, company, location, description, e["jd_quality"], e["country"], e["region"], e["work_mode"],
+                e["seniority"], e["years_req"], e["domains"], e["match_auto"], e["match_ml"], e["match"],
+                e["best_template"], e["missing"], e["lang"], e["elig"], e["elig_reason"],
+                datetime.now(timezone.utc).isoformat(), old["id"]))
+        return db.one("SELECT * FROM jobs WHERE id=?", (old["id"],))
+    j = {"platform": "Manual", "ext_id": str(uuid.uuid4())[:8], "title": title, "company": company,
+         "location": location, "url": url, "description": description,
+         "posted": datetime.now(timezone.utc).isoformat(), "remote": "remote" in location.lower()}
+    ingest.ingest_result({"jobs": [j], "platforms": ["manual"]}, "manual")
+    return db.one("SELECT * FROM jobs WHERE ext_id=?", (j["ext_id"],))
+
+
 @app.post("/api/jobs/manual")
 def job_manual():
-    d = request.json or {}
-    j = {"platform": "Manual", "ext_id": str(uuid.uuid4())[:8], "title": d.get("title", "").strip(), "company": d.get("company", ""),
-         "location": d.get("location", ""), "url": d.get("url") or "about:blank", "description": d.get("description", ""),
-         "posted": datetime.now(timezone.utc).isoformat(), "remote": "remote" in (d.get("location", "") or "").lower()}
-    ingest.ingest_result({"jobs": [j], "platforms": ["manual"]}, "manual")
-    r = db.one("SELECT id FROM jobs WHERE ext_id=?", (j["ext_id"],))
-    return jsonify({"id": r["id"] if r else None})
+    row = _manual_job(request.json or {})
+    return jsonify({"id": row["id"] if row else None})
 
 
 @app.post("/api/jobs/<int:jid>/fetch_jd")
@@ -505,6 +528,25 @@ def ext_result():
     d = request.get_json(force=True) or {}
     exthub.result(d.get("id"), d)
     return jsonify({"ok": True})
+
+
+@app.post("/api/ext/manual-start")
+def ext_manual_start():
+    """Start the assistant in the tab chosen from the extension popup."""
+    if not _ext_ok():
+        return jsonify({"error": "forbidden"}), 403
+    d = request.get_json(force=True) or {}
+    url = str(d.get("url") or "")
+    if not url.lower().startswith(("http://", "https://")):
+        return jsonify({"ok": False, "error": "Open a normal job page first."}), 400
+    cur = applier.STATE.get("session") or {}
+    if cur.get("alive") and cur.get("status") not in ("done", "skipped", "stopped", "error", "ended", "gave_up"):
+        return jsonify({"ok": False, "error": "An application is already running. Stop or finish it first."}), 409
+    row = _manual_job(d)
+    if not row:
+        return jsonify({"ok": False, "error": "Could not add this job to JobHunter."}), 500
+    started = applier.start(row["id"])
+    return jsonify({**started, "job_id": row["id"], "title": row["title"], "company": row["company"]})
 
 
 @app.post("/api/ext/call")

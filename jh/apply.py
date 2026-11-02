@@ -52,6 +52,8 @@ def _event(sess, ev):
             sess.update(status="needs_input", need=ev, need_since=_now())
         elif t == "resumed":
             sess.update(status="running", need=None)
+        elif t == "stop_requested":
+            sess.update(status="stopping", need=None)
         elif t == "done":
             already_done = sess.get("status") == "done"
             sess.update(status="done", need=None, completion=ev)
@@ -168,12 +170,19 @@ def send(cmd):
     s = STATE["session"]
     if not s or not s.get("proc") or s["proc"].poll() is not None:
         return False
-    if cmd.get("cmd") == "stop" and s.get("status") not in ("needs_input",):
-        # engine is busy (not waiting for you) — it may not read stdin for a while, so stop it for real
-        threading.Thread(target=close_current, args=(s,), daemon=True).start()
-        with _lock:
-            s["status"] = "stopped"
-        return True
+    if cmd.get("cmd") == "stop":
+        was_waiting = s.get("status") == "needs_input"
+        _event(s, {"type": "stop_requested", "message": "Stop requested — shutting down the apply flow…",
+                   "t": int(time.time() * 1000)})
+        if not was_waiting:
+            # The engine is busy and may not read stdin promptly, so stop it in a worker and acknowledge immediately.
+            def stop_now():
+                close_current(s)
+                if s.get("status") != "stopped":
+                    _event(s, {"type": "stopped", "message": "Apply flow stopped by you.",
+                               "t": int(time.time() * 1000)})
+            threading.Thread(target=stop_now, daemon=True).start()
+            return True
     if cmd.get("cmd") == "answers":       # remember answers for next time
         qs = {q["fid"]: q for q in ((s.get("need") or {}).get("questions") or [])}
         for fid, val in (cmd.get("answers") or {}).items():

@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>JobHunter Apply Helper</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, Segoe UI, sans-serif; }
+    body { width: 300px; margin: 0; padding: 16px; background: #11121a; color: #f5f6ff; }
+    h1 { margin: 0 0 5px; font-size: 17px; }
+    p { margin: 0 0 14px; color: #aeb2c8; font-size: 12px; line-height: 1.45; }
+    button, a { box-sizing: border-box; width: 100%; border-radius: 9px; padding: 10px 12px; font: inherit; font-weight: 650; text-align: center; text-decoration: none; cursor: pointer; }
+    button { border: 0; background: #7868ff; color: white; }
+    button:disabled { opacity: .65; cursor: wait; }
+    a { display: block; margin-top: 8px; border: 1px solid #35384a; color: #d9dbeb; }
+    #status { min-height: 18px; margin-top: 11px; color: #aeb2c8; font-size: 12px; line-height: 1.4; }
+    #status.ok { color: #65d89a; }
+    #status.bad { color: #ff7f89; }
+  </style>
+</head>
+<body>
+  <h1>JobHunter Apply Helper</h1>
+  <p>Found a job yourself? Start the supervised form-filling flow in this tab. A detected submission will be added to Applied.</p>
+  <button id="apply">⚡ Apply on this page</button>
+  <a href="http://127.0.0.1:8765/#/apply" target="_blank">Open Apply assistant</a>
+  <div id="status" role="status" aria-live="polite"></div>
+  <script src="popup.js"></script>
+</body>
+</html>

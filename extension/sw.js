@@ -1,6 +1,6 @@
 // JobHunter Apply Helper — background worker.
 // Long-polls the local JobHunter app (http://localhost:8765) for actions and runs them in a tab of YOUR browser,
-// so applications open as a new tab in your current window with all your existing logins.
+// so applications use your current window, existing logins, and optionally the job page you already opened.
 const BASE = 'http://127.0.0.1:8765';
 const H = { 'X-JH': '1', 'Content-Type': 'application/json' };
 const VER = chrome.runtime.getManifest().version;
@@ -8,23 +8,102 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const UA = navigator.userAgent; const BROWSER = /Edg\//.test(UA) ? 'Edge' : 'Chrome';
 
 // ---------- session (which tab we're working in) ----------
-let S = { tab: null, ours: [], manualSubmit: null };
+const EMPTY = () => ({ tab: null, ours: [], opened: [], manualSubmit: null, reuseCurrent: false });
+let S = EMPTY();
 const save = () => chrome.storage.session.set({ S }).catch(() => {});
-chrome.storage.session.get('S').then((r) => { if (r && r.S) S = { tab: null, ours: [], manualSubmit: null, ...r.S }; }).catch(() => {});
+const restored = chrome.storage.session.get('S').then((r) => {
+  if (r && r.S) S = { ...EMPTY(), ...r.S, opened: r.S.opened || r.S.ours || [] };
+}).catch(() => {});
 
-chrome.runtime.onMessage.addListener((msg, sender) => {
-  if (msg?.type !== 'jh_manual_submit' || !sender.tab || !S.ours.includes(sender.tab.id)) return;
-  S.manualSubmit = msg.detail || { text: 'Submit', url: sender.tab.url, at: Date.now() };
-  save();
+function pageJob() {
+  const first = (...xs) => xs.map((x) => String(x || '').trim()).find(Boolean) || '';
+  const meta = (key, attr = 'property') => document.querySelector(`meta[${attr}="${key}"]`)?.content || '';
+  const text = (value) => {
+    if (!value) return '';
+    const box = document.createElement('div'); box.innerHTML = String(value);
+    return (box.innerText || box.textContent || '').replace(/\s+/g, ' ').trim();
+  };
+  const nodes = [];
+  for (const el of document.querySelectorAll('script[type="application/ld+json"]')) {
+    try {
+      const root = JSON.parse(el.textContent || 'null');
+      const walk = (x) => {
+        if (!x) return;
+        if (Array.isArray(x)) return x.forEach(walk);
+        if (typeof x !== 'object') return;
+        const types = Array.isArray(x['@type']) ? x['@type'] : [x['@type']];
+        if (types.some((t) => String(t).toLowerCase() === 'jobposting')) nodes.push(x);
+        walk(x['@graph']);
+      };
+      walk(root);
+    } catch {}
+  }
+  const job = nodes[0] || {};
+  const org = job.hiringOrganization || {};
+  const loc = Array.isArray(job.jobLocation) ? job.jobLocation[0] : (job.jobLocation || {});
+  const addr = loc.address || {};
+  const locationText = first(
+    job.jobLocationType === 'TELECOMMUTE' ? 'Remote' : '',
+    [addr.addressLocality, addr.addressRegion, addr.addressCountry?.name || addr.addressCountry].filter(Boolean).join(', '),
+    text(job.jobLocation)
+  );
+  const body = (document.body?.innerText || '').replace(/\s+/g, ' ').trim();
+  return {
+    url: globalThis.location.href,
+    title: first(job.title, meta('og:title'), document.querySelector('h1')?.innerText, document.title).slice(0, 300),
+    company: first(org.name, meta('og:site_name'), meta('application-name', 'name')).slice(0, 200),
+    location: locationText.slice(0, 300),
+    description: first(text(job.description), meta('og:description'), meta('description', 'name'), body).slice(0, 50000),
+  };
+}
+
+async function startCurrentTab() {
+  await restored;
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  if (!tab || !/^https?:/i.test(tab.url || '')) return { ok: false, error: 'Open a job page first, then press Apply.' };
+  let job;
+  try {
+    const [result] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: pageJob });
+    job = result?.result;
+  } catch {
+    return { ok: false, error: 'This browser page cannot be read. Open the actual HTTP/HTTPS job page and try again.' };
+  }
+  const previous = S;
+  S = { tab: tab.id, ours: [tab.id], opened: [], manualSubmit: null, reuseCurrent: true };
+  await save();
+  try {
+    const response = await fetch(`${BASE}/api/ext/manual-start`, { method: 'POST', headers: H, body: JSON.stringify(job) });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.ok === false) throw new Error(data.error || 'Could not start the apply assistant');
+    chrome.action.setBadgeBackgroundColor({ color: '#6d5dfc' });
+    chrome.action.setBadgeText({ text: 'run' });
+    return { ok: true, title: data.title || job.title, company: data.company || job.company, jobId: data.job_id };
+  } catch (e) {
+    S = previous; await save();
+    return { ok: false, error: /fetch/i.test(String(e?.message)) ? 'Start JobHunter first, then try again.' : String(e?.message || e) };
+  }
+}
+
+chrome.runtime.onMessage.addListener((msg, sender, respond) => {
+  if (msg?.type === 'jh_manual_submit' && sender.tab && S.ours.includes(sender.tab.id)) {
+    S.manualSubmit = msg.detail || { text: 'Submit', url: sender.tab.url, at: Date.now() };
+    save(); return;
+  }
+  if (msg?.type === 'jh_apply_current') {
+    startCurrentTab().then(respond); return true;
+  }
 });
 
 // follow tabs the application opens itself (e.g. "Apply on company site" in a new tab)
 chrome.tabs.onCreated.addListener((t) => {
-  if (S.tab != null && t.openerTabId === S.tab) { S.tab = t.id; S.ours.push(t.id); save(); }
+  if (S.tab != null && t.openerTabId === S.tab) {
+    S.tab = t.id; S.ours.push(t.id); S.opened.push(t.id); save();
+  }
 });
 chrome.tabs.onRemoved.addListener((id) => {
   if (!S.ours.includes(id)) return;
   S.ours = S.ours.filter((x) => x !== id);
+  S.opened = S.opened.filter((x) => x !== id);
   if (S.tab === id) S.tab = S.ours.length ? S.ours[S.ours.length - 1] : null;
   save();
 });
@@ -54,11 +133,19 @@ async function run(op) {
   const tab = S.tab;
   switch (op.op) {
     case 'hello': return { ok: true, browser: BROWSER, version: VER };
-    case 'open': {   // new tab in the window you're using right now
+    case 'open': {   // reuse a manually selected page, otherwise open a new tab in the current window
+      if (S.reuseCurrent && tab != null) {
+        S.reuseCurrent = false; await save();
+        const t = await chrome.tabs.update(tab, { active: true }).catch(() => null);
+        if (!t) return { ok: false, error: 'the selected job tab was closed' };
+        try { await chrome.windows.update(t.windowId, { focused: true }); } catch {}
+        await waitLoad(tab, 30000);
+        return { ok: true, tab, reused: true };
+      }
       let win = null;
       try { win = await chrome.windows.getLastFocused({ windowTypes: ['normal'] }); } catch {}
       const t = await chrome.tabs.create({ url: op.url, active: true, ...(win ? { windowId: win.id } : {}) });
-      S = { tab: t.id, ours: [t.id], manualSubmit: null }; save();
+      S = { tab: t.id, ours: [t.id], opened: [t.id], manualSubmit: null, reuseCurrent: false }; save();
       await waitLoad(t.id, 30000);
       return { ok: true, tab: t.id };
     }
@@ -70,9 +157,9 @@ async function run(op) {
       try { await chrome.windows.update(t.windowId, { focused: true, drawAttention: true }); } catch {}
       return { ok: true };
     }
-    case 'close': {   // close only the tabs this application opened
-      for (const id of S.ours) { try { await chrome.tabs.remove(id); } catch {} }
-      S = { tab: null, ours: [], manualSubmit: null }; save(); return { ok: true };
+    case 'close': {   // never close a manually selected tab; only tabs the helper itself opened
+      for (const id of S.opened) { try { await chrome.tabs.remove(id); } catch {} }
+      S = EMPTY(); save(); return { ok: true };
     }
     case 'scan': {
       if (tab == null) return { ok: false, error: 'no tab' };
@@ -122,5 +209,4 @@ chrome.alarms.create('jh-keepalive', { periodInMinutes: 0.5 });
 chrome.alarms.onAlarm.addListener(() => loop());
 chrome.runtime.onStartup.addListener(() => loop());
 chrome.runtime.onInstalled.addListener(() => loop());
-chrome.action.onClicked.addListener(() => chrome.tabs.create({ url: BASE + '/#/apply' }));
 loop();
