@@ -21,6 +21,16 @@ STATE = {"session": None, "queue": _load_queue(), "history": []}
 _lock = threading.RLock()
 
 
+class _ApplyCancelled(Exception):
+    def __init__(self, action):
+        self.action = action
+
+
+def _check_cancel(sess):
+    if sess.get("_cancel") in ("stop", "skip"):
+        raise _ApplyCancelled(sess["_cancel"])
+
+
 def _now():
     return datetime.now().isoformat(timespec="seconds")
 
@@ -85,7 +95,6 @@ def _event(sess, ev):
                 db.exe("UPDATE jobs SET status='applied', applied_at=?, updated_at=? WHERE id=?", (now, now, sess["job"]["id"]))
                 db.exe("INSERT INTO events (job_id, ts, kind, detail) VALUES (?,?,?,?)", (sess["job"]["id"], now, "applied", f"via {via}"))
         elif t in ("skipped", "stopped", "gave_up", "error"):
-            sess.pop("_cancel", None)
             sess.update(status=t, need=None)
         elif t == "finished":
             _finish(sess)
@@ -156,17 +165,22 @@ def start(job_id, resume_id=None):
 
     def boot():
         try:
-            prog = lambda m: _event(sess, {"type": "log", "msg": m, "t": int(time.time() * 1000)})
+            def prog(m):
+                _check_cancel(sess)
+                _event(sess, {"type": "log", "msg": m, "t": int(time.time() * 1000)})
+            _check_cancel(sess)
             if resume_id:
                 r = db.one("SELECT * FROM resumes WHERE id=?", (resume_id,))
                 pdf, rid = r["pdf_path"], r["id"]
             else:
                 pdf, rid = pick_resume(job, prog)
+            _check_cancel(sess)
             sess["resume_id"] = rid
             up = os.path.join(APPLY_DIR, "Candidate_Resume.pdf")
             shutil.copyfile(pdf, up)
             prof = applyprofile.load()
             cover = cover_letter_pdf(job, prof) if str(prof.get("upload_cover_letter", "Yes")).startswith("Yes") else None
+            _check_cancel(sess)
             cdp, ext = None, None
             mode = db.settings().get("apply_browser", "auto")
             if mode in ("auto", "mine"):
@@ -186,7 +200,9 @@ def start(job_id, resume_id=None):
                    "browser_channel": db.settings().get("browser_channel", "chrome")}
             sess["uses_extension"] = bool(ext)
             path = os.path.join(APPLY_DIR, "session.json")
-            json.dump(cfg, open(path, "w", encoding="utf-8"), ensure_ascii=False)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(cfg, f, ensure_ascii=False)
+            _check_cancel(sess)
             prog(f"Opening {job['url']} in a visible browser window…")
             proc = subprocess.Popen([scraper._node(), os.path.join(scraper.SCRAPER_DIR, "apply.mjs"), path], cwd=scraper.SCRAPER_DIR,
                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
@@ -197,6 +213,13 @@ def start(job_id, resume_id=None):
             sess["proc"] = proc
             sess["status"] = "running"
             threading.Thread(target=_reader, args=(sess, proc), daemon=True).start()
+        except _ApplyCancelled as e:
+            if not sess.get("_finish_scheduled"):
+                final_status = "stopped" if e.action == "stop" else "skipped"
+                _event(sess, {"type": final_status, "message": f"Apply flow {final_status} during startup.",
+                               "t": int(time.time() * 1000)})
+            sess["alive"] = False
+            _finish(sess)
         except Exception as e:
             _event(sess, {"type": "error", "message": str(e), "t": int(time.time() * 1000)})
             sess["alive"] = False
@@ -207,25 +230,32 @@ def start(job_id, resume_id=None):
 
 def send(cmd):
     s = STATE["session"]
-    if not s or not s.get("proc") or s["proc"].poll() is not None:
+    if not s:
         return False
     action = cmd.get("cmd")
     if action in ("stop", "skip"):
+        if s.get("status") in ("done", "skipped", "stopped", "error", "ended", "gave_up"):
+            return False
         s["_cancel"] = action
         requested = "stop_requested" if action == "stop" else "skip_requested"
         message = "Stop requested — shutting down the apply flow…" if action == "stop" else "Skip requested — ending this job and moving to the next…"
         _event(s, {"type": requested, "message": message, "t": int(time.time() * 1000)})
-        try:
-            s["proc"].stdin.write(json.dumps(cmd) + "\n")
-            s["proc"].stdin.flush()
-        except Exception:
-            pass
+        proc = s.get("proc")
+        if proc and proc.poll() is None:
+            try:
+                proc.stdin.write(json.dumps(cmd) + "\n")
+                proc.stdin.flush()
+            except Exception:
+                pass
 
         def cancel_watchdog():
             time.sleep(4)
+            if s.get("_finish_scheduled"):
+                return
             final_status = "stopped" if action == "stop" else "skipped"
-            if s["proc"].poll() is None and s.get("_cancel") == action:
-                _kill_tree(s["proc"])
+            worker = s.get("proc")
+            if worker and worker.poll() is None and s.get("_cancel") == action:
+                _kill_tree(worker)
                 if s.get("uses_extension") and exthub.connected():
                     try:
                         exthub.call({"op": "close"}, timeout=12)
@@ -234,11 +264,14 @@ def send(cmd):
             if s.get("_cancel") == action:
                 _event(s, {"type": final_status, "message": f"Apply flow {final_status} by you.",
                            "t": int(time.time() * 1000)})
-            if s.get("status") in ("stopped", "skipped") or s["proc"].poll() is not None:
+                s["alive"] = False
+            if s.get("status") in ("stopped", "skipped") or (worker and worker.poll() is not None):
                 _finish(s)
 
         threading.Thread(target=cancel_watchdog, daemon=True).start()
         return True
+    if not s.get("proc") or s["proc"].poll() is not None:
+        return False
     if cmd.get("cmd") == "answers":       # remember answers for next time
         qs = {q["fid"]: q for q in ((s.get("need") or {}).get("questions") or [])}
         for fid, val in (cmd.get("answers") or {}).items():

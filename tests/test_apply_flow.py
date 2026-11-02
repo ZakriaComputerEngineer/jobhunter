@@ -69,6 +69,27 @@ class ApplyFlowTests(unittest.TestCase):
             applier.STATE["queue"] = old_queue
             applier.STATE["history"] = old_history
 
+    def test_skip_works_before_browser_worker_exists(self):
+        old = applier.STATE["session"]
+        session = {"id": "s-starting", "job": {"id": 5}, "status": "starting", "need": None,
+                   "events": [], "alive": True, "started": "now"}
+        applier.STATE["session"] = session
+        try:
+            with patch.object(applier.threading, "Thread") as thread:
+                self.assertTrue(applier.send({"cmd": "skip"}))
+            self.assertEqual(session["status"], "skipping")
+            self.assertEqual(session["events"][-1]["type"], "skip_requested")
+            watchdog = thread.call_args.kwargs["target"]
+            with patch.object(applier.time, "sleep"), patch.object(applier, "_finish") as finish:
+                watchdog()
+            self.assertEqual(session["status"], "skipped")
+            self.assertFalse(session["alive"])
+            finish.assert_called_once_with(session)
+            with self.assertRaises(applier._ApplyCancelled):
+                applier._check_cancel(session)
+        finally:
+            applier.STATE["session"] = old
+
     def test_worker_exit_finalizes_interrupted_skip(self):
         proc = type("FinishedProc", (), {"stdout": [], "wait": lambda _: 0})()
         session = {"id": "s-reader", "job": {"id": 1}, "status": "skipping", "events": [], "alive": True}
