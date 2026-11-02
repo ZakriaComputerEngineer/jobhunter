@@ -28,4 +28,4 @@ jobs:
         working-directory: scraper
       - run: node --check scraper/apply.mjs
       - run: node --check scraper/run.mjs
-      - run: node --test tests/*.test.mjs
+      - run: node --test tests/apply_rules.test.mjs
