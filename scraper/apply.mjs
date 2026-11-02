@@ -22,11 +22,17 @@ const jitter = (a, b) => sleep(a + Math.random() * (b - a));
 
 // ---------------- command channel ----------------
 const queue = []; let waiter = null;
+let STOP = false; let SKIP = false;
 readline.createInterface({ input: process.stdin }).on('line', (l) => {
-  try { const c = JSON.parse(l); if (waiter) { const w = waiter; waiter = null; w(c); } else queue.push(c); } catch {}
+  try {
+    const c = JSON.parse(l);
+    if (c.cmd === 'stop') STOP = true;
+    if (c.cmd === 'skip') SKIP = true;
+    if (waiter) { const w = waiter; waiter = null; w(c); }
+    else if (!['stop', 'skip'].includes(c.cmd)) queue.push(c);
+  } catch {}
 });
 const nextCmd = () => (queue.length ? Promise.resolve(queue.shift()) : new Promise((r) => (waiter = r)));
-let STOP = false;
 let manualSubmitSignal = null;
 
 // wait for the user; resolves early if autoCheck() becomes true (e.g. captcha solved, logged in)
@@ -38,7 +44,7 @@ async function needUser(reason, message, extra = {}, autoCheck = null) {
       if (!autoCheck) return new Promise(() => {});
       while (true) { await sleep(2500); try { if (await autoCheck()) return { cmd: 'continue', auto: true }; } catch {} }
     })()]);
-    if (c.cmd === 'stop') { STOP = true; return c; }
+    if (c.cmd === 'stop' || c.cmd === 'skip') return c;
     emit('resumed', { by: c.auto ? 'auto' : 'you', cmd: c.cmd });
     return c;
   }
@@ -541,10 +547,11 @@ async function main() {
   await p0.goto(JOB.url, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch((e) => log('open: ' + e.message.split('\n')[0]));
   await jitter(2500, 4000);
   const answered = {}; let lastSig = ''; let same = 0; let clickedApply = false; let blank = 0; let noBtn = 0;
-  for (let step = 0; step < 80 && !STOP; step++) {
+  for (let step = 0; step < 80 && !STOP && !SKIP; step++) {
     const p = page();
     await p.waitForLoadState('domcontentloaded').catch(() => {}); await jitter(1000, 1800);
     const sc = await scanAll(p);
+    if (STOP || SKIP) break;
     // page still loading / being swapped (SPA redirect, new tab) → give it a moment instead of judging an empty page
     if (!sc.url || (sc.fields.length === 0 && sc.buttons.length === 0)) { if (++blank <= 5) { await sleep(2000); step--; continue; } }
     else blank = 0;
@@ -585,6 +592,7 @@ async function main() {
     }
     // fill
     const r = await fillPage(p, sc, answered);
+    if (STOP || SKIP) break;
     emit('filled', { count: r.filled, total: sc.fields.length, unknown: r.unknown.length });
     const sig = sc.url + '|' + sc.fields.map((f) => f.label).join(',');
     same = sig === lastSig ? same + 1 : 0; lastSig = sig;
@@ -606,6 +614,7 @@ async function main() {
       const c = await needUser('stuck', 'I seem to be stuck on this page (maybe a validation error or a custom widget). Please fix it in the browser, then Continue.');
       if (c.cmd === 'skip') { emit('skipped'); return; } same = 0; continue;
     }
+    if (STOP || SKIP) break;
     if (nextB) { log(`Clicking “${nextB.text}”`); await clickBtn(p, nextB).catch((e) => log(e.message.split('\n')[0])); continue; }
     if (subB) {
       if (/^yes/i.test(P.auto_submit || '')) { log(`Submitting (“${subB.text}”)`); await clickBtn(p, subB); emit('done', { url: sc.url, via: 'automatic submit', button: subB.text }); return; }
@@ -624,7 +633,9 @@ async function main() {
     const c = await needUser('stuck', 'I can’t find a Next / Submit button here. Please take the next step in the browser, then Continue.');
     if (c.cmd === 'skip') { emit('skipped'); return; }
   }
-  if (STOP) emit('stopped'); else emit('gave_up', { message: 'Too many steps' });
+  if (SKIP) emit('skipped', { via: 'skip button' });
+  else if (STOP) emit('stopped');
+  else emit('gave_up', { message: 'Too many steps' });
 }
 
 try { await main(); } catch (e) { emit('error', { message: e.message.split('\n')[0] }); }

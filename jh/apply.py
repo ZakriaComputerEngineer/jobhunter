@@ -6,12 +6,31 @@ import docx
 from . import db, applyprofile, render, scraper, tailor, browser, exthub
 
 APPLY_DIR = os.path.join(db.DATA, "apply")
-STATE = {"session": None, "queue": [], "history": []}
+QUEUE_PATH = os.path.join(db.DATA, "apply_queue.json")
+
+
+def _load_queue():
+    try:
+        with open(QUEUE_PATH, encoding="utf-8") as f:
+            return [int(x) for x in json.load(f)]
+    except Exception:
+        return []
+
+
+STATE = {"session": None, "queue": _load_queue(), "history": []}
 _lock = threading.RLock()
 
 
 def _now():
     return datetime.now().isoformat(timespec="seconds")
+
+
+def _save_queue():
+    os.makedirs(db.DATA, exist_ok=True)
+    tmp = QUEUE_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(STATE["queue"], f)
+    os.replace(tmp, QUEUE_PATH)
 
 
 def cover_letter_pdf(job, prof):
@@ -54,7 +73,10 @@ def _event(sess, ev):
             sess.update(status="running", need=None)
         elif t == "stop_requested":
             sess.update(status="stopping", need=None)
+        elif t == "skip_requested":
+            sess.update(status="skipping", need=None)
         elif t == "done":
+            sess.pop("_cancel", None)
             already_done = sess.get("status") == "done"
             sess.update(status="done", need=None, completion=ev)
             if not already_done:
@@ -63,12 +85,23 @@ def _event(sess, ev):
                 db.exe("UPDATE jobs SET status='applied', applied_at=?, updated_at=? WHERE id=?", (now, now, sess["job"]["id"]))
                 db.exe("INSERT INTO events (job_id, ts, kind, detail) VALUES (?,?,?,?)", (sess["job"]["id"], now, "applied", f"via {via}"))
         elif t in ("skipped", "stopped", "gave_up", "error"):
+            sess.pop("_cancel", None)
             sess.update(status=t, need=None)
         elif t == "finished":
-            sess["finished"] = _now()
-            if sess["status"] in ("running", "starting"):
-                sess["status"] = "ended"
-            threading.Timer(4 if sess["status"] in ("done", "skipped") else 0.1, _after_finish, args=(sess,)).start()
+            _finish(sess)
+
+
+def _finish(sess):
+    """Finalize once even when the worker is killed before it can emit `finished`."""
+    with _lock:
+        if sess.get("_finish_scheduled"):
+            return
+        sess["_finish_scheduled"] = True
+        sess["finished"] = sess.get("finished") or _now()
+        if sess["status"] in ("running", "starting"):
+            sess["status"] = "ended"
+        delay = 4 if sess["status"] == "done" else 1 if sess["status"] == "skipped" else 0.1
+    threading.Timer(delay, _after_finish, args=(sess,)).start()
 
 
 def _after_finish(sess):
@@ -92,8 +125,13 @@ def _reader(sess, proc):
     proc.wait()
     with _lock:
         sess["alive"] = False
-        if sess["status"] in ("running", "starting", "needs_input"):
+        if sess["status"] == "skipping":
+            sess["status"] = "skipped"
+        elif sess["status"] == "stopping":
+            sess["status"] = "stopped"
+        elif sess["status"] in ("running", "starting", "needs_input"):
             sess["status"] = "ended"
+    _finish(sess)
 
 
 def start(job_id, resume_id=None):
@@ -146,6 +184,7 @@ def start(job_id, resume_id=None):
                     prog(f"Shared Chrome unavailable ({msg}) — opening a separate window instead.")
             cfg = {"ext": ext, "cdp": cdp, "job": sess["job"], "profile": prof, "qa": applyprofile.qa_load(), "resume": up, "cover_pdf": cover,
                    "browser_channel": db.settings().get("browser_channel", "chrome")}
+            sess["uses_extension"] = bool(ext)
             path = os.path.join(APPLY_DIR, "session.json")
             json.dump(cfg, open(path, "w", encoding="utf-8"), ensure_ascii=False)
             prog(f"Opening {job['url']} in a visible browser window…")
@@ -170,19 +209,36 @@ def send(cmd):
     s = STATE["session"]
     if not s or not s.get("proc") or s["proc"].poll() is not None:
         return False
-    if cmd.get("cmd") == "stop":
-        was_waiting = s.get("status") == "needs_input"
-        _event(s, {"type": "stop_requested", "message": "Stop requested — shutting down the apply flow…",
-                   "t": int(time.time() * 1000)})
-        if not was_waiting:
-            # The engine is busy and may not read stdin promptly, so stop it in a worker and acknowledge immediately.
-            def stop_now():
-                close_current(s)
-                if s.get("status") != "stopped":
-                    _event(s, {"type": "stopped", "message": "Apply flow stopped by you.",
-                               "t": int(time.time() * 1000)})
-            threading.Thread(target=stop_now, daemon=True).start()
-            return True
+    action = cmd.get("cmd")
+    if action in ("stop", "skip"):
+        s["_cancel"] = action
+        requested = "stop_requested" if action == "stop" else "skip_requested"
+        message = "Stop requested — shutting down the apply flow…" if action == "stop" else "Skip requested — ending this job and moving to the next…"
+        _event(s, {"type": requested, "message": message, "t": int(time.time() * 1000)})
+        try:
+            s["proc"].stdin.write(json.dumps(cmd) + "\n")
+            s["proc"].stdin.flush()
+        except Exception:
+            pass
+
+        def cancel_watchdog():
+            time.sleep(4)
+            final_status = "stopped" if action == "stop" else "skipped"
+            if s["proc"].poll() is None and s.get("_cancel") == action:
+                _kill_tree(s["proc"])
+                if s.get("uses_extension") and exthub.connected():
+                    try:
+                        exthub.call({"op": "close"}, timeout=12)
+                    except Exception:
+                        pass
+            if s.get("_cancel") == action:
+                _event(s, {"type": final_status, "message": f"Apply flow {final_status} by you.",
+                           "t": int(time.time() * 1000)})
+            if s.get("status") in ("stopped", "skipped") or s["proc"].poll() is not None:
+                _finish(s)
+
+        threading.Thread(target=cancel_watchdog, daemon=True).start()
+        return True
     if cmd.get("cmd") == "answers":       # remember answers for next time
         qs = {q["fid"]: q for q in ((s.get("need") or {}).get("questions") or [])}
         for fid, val in (cmd.get("answers") or {}).items():
@@ -204,10 +260,26 @@ def close_current(sess=None):
             pr.stdin.write(json.dumps({"cmd": "stop"}) + "\n"); pr.stdin.flush()
             pr.wait(timeout=6)
         except Exception:
-            try: pr.kill()
-            except Exception: pass
+            _kill_tree(pr)
     if sess:
         sess["alive"] = False
+
+
+def _kill_tree(proc):
+    """Terminate only this apply worker and any browser processes it launched."""
+    if not proc or proc.poll() is not None:
+        return
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, timeout=10, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        else:
+            proc.kill()
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
 
 
 def start_next():
@@ -215,6 +287,7 @@ def start_next():
         if not STATE["queue"]:
             return None
         jid = STATE["queue"].pop(0)
+        _save_queue()
     return start(jid)
 
 
@@ -229,15 +302,22 @@ def enqueue(ids):
         for i in ids:
             if i != current_id and i not in STATE["queue"]:
                 STATE["queue"].append(i)
+        _save_queue()
         busy = STATE["session"] and STATE["session"].get("alive")
     if not busy:
         start_next()
     return list(STATE["queue"])
 
 
+def clear_queue():
+    with _lock:
+        STATE["queue"].clear()
+        _save_queue()
+
+
 def status():
     s = STATE["session"]
     out = {"queue": [db.one("SELECT id,title,company FROM jobs WHERE id=?", (i,)) for i in STATE["queue"]], "history": STATE["history"][:15]}
     if s:
-        out["session"] = {k: v for k, v in s.items() if k != "proc"}
+        out["session"] = {k: v for k, v in s.items() if k != "proc" and not k.startswith("_")}
     return out

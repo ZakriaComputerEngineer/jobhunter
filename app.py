@@ -596,7 +596,7 @@ def apply_status():
 
 @app.post("/api/apply/queue/clear")
 def apply_queue_clear():
-    applier.STATE["queue"].clear()
+    applier.clear_queue()
     return jsonify({"ok": True})
 
 
