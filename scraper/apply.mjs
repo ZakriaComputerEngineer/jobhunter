@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
+import { ALREADY_APPLIED_RX, CLOSED_JOB_RX } from './apply_rules.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 let chromium;
@@ -523,7 +524,6 @@ async function fillPage(p, scan, answered) {
 
 // ---------------- page understanding ----------------
 const DONE_RX = /thank(s| you) for (applying|your (application|interest))|application (has been |was )?(submitted|received|sent|complete)|we(’|')?ve received your application|successfully (applied|submitted)|you(’|')?ve applied|your application is on its way/i;
-const ALREADY_APPLIED_RX = /^(?:already\s+)?applied(?:\s+on\s+.+)?$|^(?:application\s+)?(?:submitted|received)$/i;
 const APPLY_RX = /^(easy apply|quick apply|apply(?: now| today| here)?|apply (?:for|to) (?:this |the )?(?:job|position|role)|apply (?:on|via|with) .+|start|begin|launch|continue (?:your |the )?application|start (?:your |the )?application|i('|’)m interested|express interest|submit (?:your )?(?:resume|cv)|join (?:us|the team))\b/i;
 const NEXT_RX = /^(next(?: step)?|continue(?: to (?:the )?(?:next step|application|review))?|save (?:and|&) (?:continue|next|proceed)|proceed|review(?: application| your application| details)?|go (?:to )?(?:next|forward)|advance|confirm (?:details|information)|complete (?:this )?step)\b/i;
 // Final-submit labels must match the whole button. Prefix matching made a JD-page
@@ -559,6 +559,12 @@ async function main() {
     else blank = 0;
     emit('page', { url: sc.url, title: sc.title, fields: sc.fields.length });
     if (sc.manualSubmit) { log(`Manual submission detected (“${sc.manualSubmit.text || 'Submit'}”)`); emit('done', { url: sc.manualSubmit.url || sc.url, via: 'manual submit button', button: sc.manualSubmit.text }); return; }
+    const closedJob = sc.body.match(CLOSED_JOB_RX);
+    if (closedJob) {
+      log(`Closed-job indicator detected (“${closedJob[0]}”)`);
+      emit('skipped', { url: sc.url, via: 'closed job indicator', reason: closedJob[0] });
+      return;
+    }
     const appliedBtn = sc.buttons.find((b) => ALREADY_APPLIED_RX.test(actionText(b.text)));
     if (appliedBtn) {
       log(`Already-applied indicator detected (“${appliedBtn.text}”)`);
