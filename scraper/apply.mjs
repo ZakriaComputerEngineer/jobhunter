@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
-import { ALREADY_APPLIED_RX, CLOSED_JOB_RX } from './apply_rules.mjs';
+import { ALREADY_APPLIED_RX, CLOSED_JOB_RX, shouldPauseRepeatedApply } from './apply_rules.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 let chromium;
@@ -548,7 +548,7 @@ async function main() {
   const p0 = page();
   await p0.goto(JOB.url, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch((e) => log('open: ' + e.message.split('\n')[0]));
   await jitter(2500, 4000);
-  const answered = {}; let lastSig = ''; let same = 0; let clickedApply = false; let blank = 0; let noBtn = 0;
+  const answered = {}; let lastSig = ''; let same = 0; let clickedApply = false; let blank = 0; let noBtn = 0; let applyClickStreak = 0;
   for (let step = 0; step < 80 && !STOP && !SKIP; step++) {
     const p = page();
     await p.waitForLoadState('domcontentloaded').catch(() => {}); await jitter(1000, 1800);
@@ -600,10 +600,20 @@ async function main() {
     const applyBtn = sc.buttons.find((b) => APPLY_RX.test(actionText(b.text)) && !/sign in|alert|similar|save/i.test(actionText(b.text)));
     const realFields = sc.fields.filter((f) => !/search|keyword|filter|subscribe|newsletter/i.test(f.label + f.name));
     if (applyBtn && (realFields.length < 3 || !clickedApply) && !SUBMIT_RX.test(actionText(applyBtn.text).replace(/^apply$/i, 'x'))) {
+      if (shouldPauseRepeatedApply(applyClickStreak)) {
+        log(`“${applyBtn.text}” did not open an application after ${applyClickStreak} clicks — asking for help`);
+        const c = await needUser('stuck', `The “${applyBtn.text}” button keeps returning to the same page. Please open the real application in the browser, then Continue — or Skip this job.`);
+        if (c.cmd === 'skip') { emit('skipped'); return; }
+        applyClickStreak = 0;
+        clickedApply = false;
+        continue;
+      }
       log(`Clicking “${applyBtn.text}”`); clickedApply = true;
+      applyClickStreak++;
       try { await clickBtn(p, applyBtn); } catch (e) { log('apply click failed: ' + e.message.split('\n')[0]); }
       continue;
     }
+    applyClickStreak = 0;
     // fill
     const r = await fillPage(p, sc, answered);
     if (STOP || SKIP) break;

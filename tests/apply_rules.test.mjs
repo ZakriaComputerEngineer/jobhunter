@@ -1,7 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { ALREADY_APPLIED_RX, CLOSED_JOB_RX } from '../scraper/apply_rules.mjs';
+import { ALREADY_APPLIED_RX, CLOSED_JOB_RX, shouldPauseRepeatedApply } from '../scraper/apply_rules.mjs';
+
+test('limits repeated Apply clicks before asking the user for help', () => {
+  assert.equal(shouldPauseRepeatedApply(0), false);
+  assert.equal(shouldPauseRepeatedApply(1), false);
+  assert.equal(shouldPauseRepeatedApply(2), true);
+});
 
 test('recognizes already-applied controls without confusing Apply actions', () => {
   for (const text of ['Applied', 'Already applied', 'Applied on Nov 2', 'Application submitted', 'Application received']) {
