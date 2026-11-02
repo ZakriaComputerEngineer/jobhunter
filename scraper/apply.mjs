@@ -187,7 +187,8 @@ const SCAN = () => {
   }
   window.__jhN = n;
   const btns = [...document.querySelectorAll('button, input[type=submit], input[type=button], a[role=button], a')].filter(vis)
-    .map((b) => ({ id: tag(b), text: (txt(b) || b.value || b.getAttribute('aria-label') || '').slice(0, 80), kind: b.tagName.toLowerCase(), href: b.href || '' }));
+    .map((b) => ({ id: tag(b), text: (txt(b) || b.value || b.getAttribute('aria-label') || '').slice(0, 80), kind: b.tagName.toLowerCase(), href: b.href || '',
+      disabled: !!b.disabled || b.getAttribute('aria-disabled') === 'true' }));
   const body = txt(document.body).slice(0, 4000);
   // CAPTCHA = a challenge you can actually SEE and haven't solved yet. Invisible reCAPTCHA/hCaptcha (badge in the corner,
   // hidden challenge frame parked off-screen) and already-ticked checkboxes don't count.
@@ -522,6 +523,7 @@ async function fillPage(p, scan, answered) {
 
 // ---------------- page understanding ----------------
 const DONE_RX = /thank(s| you) for (applying|your (application|interest))|application (has been |was )?(submitted|received|sent|complete)|we(’|')?ve received your application|successfully (applied|submitted)|you(’|')?ve applied|your application is on its way/i;
+const ALREADY_APPLIED_RX = /^(?:already\s+)?applied(?:\s+on\s+.+)?$|^(?:application\s+)?(?:submitted|received)$/i;
 const APPLY_RX = /^(easy apply|quick apply|apply(?: now| today| here)?|apply (?:for|to) (?:this |the )?(?:job|position|role)|apply (?:on|via|with) .+|start|begin|launch|continue (?:your |the )?application|start (?:your |the )?application|i('|’)m interested|express interest|submit (?:your )?(?:resume|cv)|join (?:us|the team))\b/i;
 const NEXT_RX = /^(next(?: step)?|continue(?: to (?:the )?(?:next step|application|review))?|save (?:and|&) (?:continue|next|proceed)|proceed|review(?: application| your application| details)?|go (?:to )?(?:next|forward)|advance|confirm (?:details|information)|complete (?:this )?step)\b/i;
 // Final-submit labels must match the whole button. Prefix matching made a JD-page
@@ -557,6 +559,12 @@ async function main() {
     else blank = 0;
     emit('page', { url: sc.url, title: sc.title, fields: sc.fields.length });
     if (sc.manualSubmit) { log(`Manual submission detected (“${sc.manualSubmit.text || 'Submit'}”)`); emit('done', { url: sc.manualSubmit.url || sc.url, via: 'manual submit button', button: sc.manualSubmit.text }); return; }
+    const appliedBtn = sc.buttons.find((b) => ALREADY_APPLIED_RX.test(actionText(b.text)));
+    if (appliedBtn) {
+      log(`Already-applied indicator detected (“${appliedBtn.text}”)`);
+      emit('done', { url: sc.url, via: 'already applied indicator', button: appliedBtn.text, alreadyApplied: true });
+      return;
+    }
     if (DONE_RX.test(sc.body)) { emit('done', { url: sc.url, via: 'confirmation page' }); return; }
     if (sc.captcha) {
       const c = await needUser('captcha', 'A CAPTCHA / “are you human” check is showing. Please solve it in the browser window — I’ll carry on automatically.', {},

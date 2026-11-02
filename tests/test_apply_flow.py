@@ -99,6 +99,15 @@ class ApplyFlowTests(unittest.TestCase):
         self.assertTrue(any("status='applied'" in call.args[0] and call.args[1][-1] == 321 for call in execute.call_args_list))
         self.assertTrue(any(call.args[0].startswith("INSERT INTO events") and "manual submit button" in call.args[1][-1] for call in execute.call_args_list))
 
+    def test_already_applied_indicator_marks_job_and_records_source(self):
+        session = {"job": {"id": 654}, "status": "running", "events": [], "need": None}
+        event = {"type": "done", "via": "already applied indicator", "button": "Applied", "alreadyApplied": True, "t": 1}
+        with patch.object(applier.db, "exe") as execute:
+            applier._event(session, event)
+        self.assertEqual(session["status"], "done")
+        self.assertTrue(any("status='applied'" in call.args[0] and call.args[1][-1] == 654 for call in execute.call_args_list))
+        self.assertTrue(any(call.args[0].startswith("INSERT INTO events") and "already applied indicator" in call.args[1][-1] for call in execute.call_args_list))
+
 
 if __name__ == "__main__":
     unittest.main()

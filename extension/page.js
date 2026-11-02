@@ -83,7 +83,8 @@ const SCAN = () => {
   }
   window.__jhN = n;
   const btns = [...document.querySelectorAll('button, input[type=submit], input[type=button], a[role=button], a')].filter(vis)
-    .map((b) => ({ id: tag(b), text: (txt(b) || b.value || b.getAttribute('aria-label') || '').slice(0, 80), kind: b.tagName.toLowerCase(), href: b.href || '' }));
+    .map((b) => ({ id: tag(b), text: (txt(b) || b.value || b.getAttribute('aria-label') || '').slice(0, 80), kind: b.tagName.toLowerCase(), href: b.href || '',
+      disabled: !!b.disabled || b.getAttribute('aria-disabled') === 'true' }));
   const body = txt(document.body).slice(0, 4000);
   // CAPTCHA = a challenge you can actually SEE and haven't solved yet. Invisible reCAPTCHA/hCaptcha (badge in the corner,
   // hidden challenge frame parked off-screen) and already-ticked checkboxes don't count.
