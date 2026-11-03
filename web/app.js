@@ -422,7 +422,7 @@ VIEWS.ats = async (_, q) => {
   setTitle('ATS Lab');
   const rs = await api('/api/resumes');
   let job = null; if (q.get('job')) job = await api('/api/jobs/' + q.get('job'));
-  $('#view').innerHTML = `<div class="grid" style="grid-template-columns:1fr 1fr">
+  $('#view').innerHTML = `<div class="grid settings-grid">
    <div class="card"><h3>Job</h3><input class="inp" id="at" placeholder="Job title" style="width:100%;margin-bottom:8px" value="${esc(job?.title || '')}"><textarea class="inp" id="ajd" rows="18" placeholder="Paste the job description…">${esc(job?.description || '')}</textarea>
      <div class="row" style="margin-top:10px"><select class="inp" id="ar"><option value="t:auto">Base · Automation CV</option><option value="t:ml">Base · ML CV</option>${rs.map((r) => `<option value="r:${r.id}">${esc(r.name)} (${Math.round(r.score)})</option>`).join('')}</select><span style="flex:1"></span><button class="btn pri" id="ago">◎ Score</button></div></div>
    <div class="card" id="aout"><div class="empty"><div class="big">◎</div>Paste a JD and score any of your resumes.<div class="small dim" style="margin-top:8px">Scoring mirrors Workday/Greenhouse-style parsers: hard skills 45, keywords 15, title 10, parse & structure 20, qualifications 10.</div></div></div></div>`;
@@ -469,6 +469,8 @@ VIEWS.settings = async () => {
   setTitle('Settings');
   const s = await api('/api/settings');
   const J = (v) => esc(JSON.stringify(v, null, 1));
+  const opt = s.discovery_options; const df = s.discovery_filters;
+  const choices = (group, items, selected) => `<div class="choice-grid">${items.map((x) => `<label class="choice"><input type="checkbox" data-discovery="${group}" value="${x.id}" ${selected.includes(x.id) ? 'checked' : ''}><span>${esc(x.label)}</span></label>`).join('')}</div>`;
   $('#view').innerHTML = `<div class="grid" style="grid-template-columns:1fr 1fr">
   <div class="card"><h3>AI writer (resume tailoring)</h3><div class="setgrid">
     <label>Provider</label><select class="inp" id="lp">${[['none', 'Rule-based only (no AI)'], ['anthropic', 'Anthropic Claude'], ['openai', 'OpenAI'], ['gemini', 'Google Gemini'], ['openrouter', 'OpenRouter'], ['ollama', 'Ollama (local)'], ['lmstudio', 'LM Studio (local)'], ['custom', 'Custom OpenAI-compatible']].map(([v, l]) => `<option value="${v}" ${s.llm.provider === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
@@ -479,7 +481,7 @@ VIEWS.settings = async () => {
     <label>ATS target</label><input class="inp" id="tg" type="number" min="50" max="100" value="${s.ats_target}">
   </div></div>
   <div class="card"><h3>Search</h3><div class="setgrid">
-    <label>Keywords</label><textarea class="inp" id="kw" rows="3">${esc(s.keywords.join('\n'))}</textarea>
+    <label>Search titles / keywords</label><textarea class="inp" id="kw" rows="3">${esc(s.keywords.join('\n'))}</textarea>
     <label>Remote-board keywords</label><textarea class="inp" id="rk" rows="2">${esc(s.remote_keywords.join('\n'))}</textarea>
     <label>Posted within (days)</label><input class="inp" id="dy" type="number" min="1" max="30" value="${s.days}">
     <label>LinkedIn levels</label><select class="inp" id="le">${[['2', 'Entry'], ['3', 'Associate'], ['3%2C4', 'Associate + Mid-Senior (mid-level)'], ['4', 'Mid-Senior'], ['2%2C3%2C4', 'Entry → Mid-Senior']].map(([v, l]) => `<option value="${v}" ${s.linkedin_experience === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
@@ -490,6 +492,25 @@ VIEWS.settings = async () => {
     <label>Default job view</label><select class="inp" id="ev">${[['ok', 'Open to me + needs checking'], ['eligible', 'Only definitely open to me'], ['all', 'Everything']].map(([v, l]) => `<option value="${v}" ${s.eligibility_view === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
     <label>Output folder</label><input class="inp" id="od" value="${esc(s.output_dir)}">
   </div></div>
+  <div class="card discovery-card"><h3>Job discovery <span class="dim small plain">AI-free rules applied to every platform</span></h3>
+    <div class="discovery-summary" id="discSummary"></div>
+    <div class="discovery-section"><h4>Platforms</h4>${choices('platforms', opt.platforms, opt.platforms.filter((x) => s.platforms[x.id] !== false).map((x) => x.id))}</div>
+    <div class="discovery-section"><h4>Regions</h4>${choices('regions', opt.regions, df.regions)}</div>
+    <div class="discovery-section"><h4>Domains and synonymous JD language</h4>${choices('domains', opt.domains, df.domains)}</div>
+    <div class="discovery-split">
+      <div class="discovery-section"><h4>Work arrangement</h4>${choices('work_modes', opt.work_modes, df.work_modes)}</div>
+      <div class="discovery-section"><h4>Seniority</h4>${choices('seniority', opt.seniority, df.seniority)}</div>
+    </div>
+    <div class="range-grid">
+      <div><label>Salary currency</label><select class="inp" id="dcur">${opt.salary_currencies.map((x) => `<option value="${x.id}" ${df.salary_currency === x.id ? 'selected' : ''}>${esc(x.label)}</option>`).join('')}</select></div>
+      <div><label>Minimum annual salary</label><input class="inp" id="dsmin" type="number" min="0" step="1000" value="${df.salary_min || 0}"></div>
+      <div><label>Maximum annual salary</label><input class="inp" id="dsmax" type="number" min="0" step="1000" value="${df.salary_max || 0}"></div>
+      <div><label>Minimum required experience</label><input class="inp" id="demin" type="number" min="0" max="30" step="1" value="${df.experience_min || 0}"></div>
+      <div><label>Maximum required experience</label><input class="inp" id="demax" type="number" min="0" max="30" step="1" value="${df.experience_max || 0}"></div>
+    </div>
+    <div class="row wrap small muted"><label class="choice inline"><input type="checkbox" id="dreqs" ${df.require_salary ? 'checked' : ''}> Require a stated salary</label><label class="choice inline"><input type="checkbox" id="dreqe" ${df.require_experience ? 'checked' : ''}> Require stated years of experience</label></div>
+    <div class="small dim" style="margin-top:8px">Salary values are compared only within the selected currency; hourly/monthly pay is left unfiltered. Jobs missing salary or experience stay eligible unless you require those fields.</div>
+  </div>
   <div class="card"><h3>Skills bank <span class="dim small" style="text-transform:none;letter-spacing:0">skills you genuinely have but aren't in either CV — tailoring may use them</span></h3>
     <textarea class="inp" id="xs" rows="5" placeholder="one per line, e.g. GCP Vertex AI">${esc((s.extra_skills || []).join('\n'))}</textarea>
     <div class="small muted" style="margin-top:8px">Detected from your CVs: ${(META.truth_skills || []).map((k) => `<span class="chip">${esc(k)}</span>`).join(' ')}</div></div>
@@ -500,12 +521,16 @@ VIEWS.settings = async () => {
     <label class="muted">Delays (ms)</label><textarea class="inp mono" id="dl" rows="3">${J(s.delays)}</textarea></div></div>
   </div><div class="row" style="margin-top:14px;justify-content:flex-end"><button class="btn" id="rs">↻ Re-score all jobs</button><button class="btn pri" id="sv">💾 Save settings</button></div>`;
   const llm = () => ({ provider: $('#lp').value, model: $('#lm').value, api_key: $('#lk').value, base_url: $('#lb').value });
+  const selected = (group) => $$(`[data-discovery="${group}"]:checked`).map((x) => x.value);
+  const discoveryFilters = () => ({ regions: selected('regions'), domains: selected('domains'), work_modes: selected('work_modes'), seniority: selected('seniority'), salary_currency: $('#dcur').value, salary_min: +$('#dsmin').value || 0, salary_max: +$('#dsmax').value || 0, require_salary: $('#dreqs').checked, experience_min: +$('#demin').value || 0, experience_max: +$('#demax').value || 0, require_experience: $('#dreqe').checked });
+  const updateSummary = () => { $('#discSummary').textContent = `${selected('platforms').length} platforms · ${selected('regions').length} regions · ${selected('domains').length} domain bags · ${selected('work_modes').length} work modes · ${selected('seniority').length} seniority levels`; };
+  $$('[data-discovery]').forEach((x) => (x.onchange = updateSummary)); updateSummary();
   $('#lt').onclick = async () => { $('#ltr').innerHTML = '<span class="spin"></span>'; const r = await api('/api/llm/test', { method: 'POST', body: { llm: llm() } }); $('#ltr').innerHTML = r.ok ? `<span style="color:var(--ok)">✓ ${esc(r.reply.slice(0, 80))}</span>` : `<span style="color:var(--bad)">${esc(r.error)}</span>`; };
   $('#rs').onclick = async () => { await api('/api/rescore', { method: 'POST' }); toast('Re-scoring in the background'); };
   $('#sv').onclick = async () => {
     try {
       const lines = (id) => $(id).value.split('\n').map((x) => x.trim()).filter(Boolean);
-      await api('/api/settings', { method: 'PUT', body: { llm: llm(), ats_target: +$('#tg').value, keywords: lines('#kw'), remote_keywords: lines('#rk'), days: +$('#dy').value, linkedin_experience: $('#le').value, browser_channel: $('#bc').value, apply_browser: $('#ab').value, headless: $('#hl').checked, schedule_enabled: $('#se').checked, schedule_time: $('#stime').value, output_dir: $('#od').value, relocation: $('#rl').value.split(',').map((x) => x.trim()).filter(Boolean), eligibility_view: $('#ev').value, extra_skills: lines('#xs'), linkedin_locations: JSON.parse($('#ll').value), indeed_sites: JSON.parse($('#is').value), company_boards: JSON.parse($('#cb').value), delays: JSON.parse($('#dl').value) } });
+      await api('/api/settings', { method: 'PUT', body: { llm: llm(), ats_target: +$('#tg').value, keywords: lines('#kw'), remote_keywords: lines('#rk'), days: +$('#dy').value, linkedin_experience: $('#le').value, browser_channel: $('#bc').value, apply_browser: $('#ab').value, headless: $('#hl').checked, schedule_enabled: $('#se').checked, schedule_time: $('#stime').value, output_dir: $('#od').value, relocation: $('#rl').value.split(',').map((x) => x.trim()).filter(Boolean), eligibility_view: $('#ev').value, extra_skills: lines('#xs'), platforms: Object.fromEntries(opt.platforms.map((x) => [x.id, selected('platforms').includes(x.id)])), discovery_filters: discoveryFilters(), linkedin_locations: JSON.parse($('#ll').value), indeed_sites: JSON.parse($('#is').value), company_boards: JSON.parse($('#cb').value), delays: JSON.parse($('#dl').value) } });
       toast('Settings saved', 'okk'); await loadMeta();
     } catch (e) { toast('Could not save: ' + esc(e.message), 'err'); }
   };
@@ -568,9 +593,12 @@ async function applyPoll() {
   } else if (s && s.alive && s.status === 'skipping') {
     clearInterval(titleBlink); document.title = 'JobHunter';
     bar.innerHTML = `<div class="ab"><b>⏭ Skipping</b><span style="flex:1" class="small">${esc(s.job.title)} · ${esc(s.job.company)} — ending this job and moving to the next…</span><a class="btn sm" href="#/apply">Open</a></div>`;
+  } else if (s && s.alive && s.status === 'paused') {
+    clearInterval(titleBlink); document.title = 'JobHunter';
+    bar.innerHTML = `<div class="ab"><b>⏸ Paused</b><span style="flex:1" class="small">Take over in the browser. Continue when you are ready for automation to resume.</span><button class="btn sm pri" data-c="continue">Continue</button><a class="btn sm" href="#/apply">Open</a></div>`;
   } else if (s && s.alive) {
     clearInterval(titleBlink); document.title = 'JobHunter';
-    bar.innerHTML = `<div class="ab run"><span class="spin"></span><b>Applying</b><span style="flex:1" class="small">${esc(s.job.title)} · ${esc(s.job.company)} — ${esc(((s.events || []).filter((e) => e.type === 'log' || e.type === 'page').slice(-1)[0] || {}).msg || ((s.events || []).slice(-1)[0] || {}).title || 'working…')}</span><a class="btn sm" href="#/apply">Open</a></div>`;
+    bar.innerHTML = `<div class="ab run"><span class="spin"></span><b>Applying</b><span style="flex:1" class="small">${esc(s.job.title)} · ${esc(s.job.company)} — ${esc(((s.events || []).filter((e) => e.type === 'log' || e.type === 'page').slice(-1)[0] || {}).msg || ((s.events || []).slice(-1)[0] || {}).title || 'working…')}</span><button class="btn sm" data-c="pause">Pause</button><a class="btn sm" href="#/apply">Open</a></div>`;
   } else { bar.innerHTML = ''; clearInterval(titleBlink); }
   $$('[data-c]', bar).forEach((b) => (b.onclick = async () => { await cmd({ cmd: b.dataset.c }); applyPoll(); }));
   if (location.hash.startsWith('#/apply') && !location.hash.includes('tab=') && window.__applyRender) window.__applyRender(st);
@@ -608,16 +636,16 @@ VIEWS.apply = async (_, q) => {
     $('#qclr') && ($('#qclr').onclick = async () => { await api('/api/apply/queue/clear', { method: 'POST' }); });
     $('#apHist').innerHTML = st.history.map((h) => `<div class="row small" style="padding:4px 0;border-top:1px solid var(--line)"><span class="pill" style="color:${h.status === 'done' ? 'var(--ok)' : 'var(--muted)'}">${esc(h.status)}</span><span style="flex:1">${esc(h.job.title)} · ${esc(h.job.company)}</span><span class="dim">${rel(h.finished)}</span></div>`).join('') || '<div class="dim small">Nothing yet.</div>';
     if (!s) { $('#apMain').innerHTML = '<div class="card empty"><div class="big">⚡</div>No application running.<br>Open a job and press <b>⚡ Apply for me</b>, or select several on the Jobs page.<br><br><a class="btn" href="#/apply?tab=profile">Complete my application profile first</a></div>'; return; }
-    const needKey = s.need ? s.id + s.need_since : null;
-    const evs = (s.events || []).filter((e) => ['log', 'page', 'filled', 'needs_input', 'resumed', 'stop_requested', 'skip_requested', 'stopped', 'done', 'error', 'skipped'].includes(e.type)).slice(-80)
-      .map((e) => `${new Date(e.t).toLocaleTimeString()}  ${e.type === 'page' ? `→ ${e.title || e.url} (${e.fields} fields)` : e.type === 'filled' ? `✎ filled ${e.count}/${e.total} fields${e.unknown ? `, ${e.unknown} unknown` : ''}` : e.type === 'needs_input' ? `⚠ ${e.message}` : e.type === 'resumed' ? `▶ resumed (${e.by})` : e.type === 'done' ? '✅ Application submitted!' : e.msg || e.message || e.type}`).join('\n');
+    const needKey = `${s.id}:${s.status}:${s.need_since || ''}`;
+    const evs = (s.events || []).filter((e) => ['log', 'page', 'filled', 'needs_input', 'paused', 'resumed', 'stop_requested', 'skip_requested', 'stopped', 'done', 'error', 'skipped'].includes(e.type)).slice(-80)
+      .map((e) => `${new Date(e.t).toLocaleTimeString()}  ${e.type === 'page' ? `→ ${e.title || e.url} (${e.fields} fields)` : e.type === 'filled' ? `✎ filled ${e.count}/${e.total} fields${e.unknown ? `, ${e.unknown} unknown` : ''}` : e.type === 'needs_input' ? `⚠ ${e.message}` : e.type === 'paused' ? '⏸ paused — you have control' : e.type === 'resumed' ? `▶ resumed (${e.by})` : e.type === 'done' ? '✅ Application submitted!' : e.msg || e.message || e.type}`).join('\n');
     if (needKey === shownNeed && $('#apLog')) { $('#apLog').textContent = evs; $('#apLog').scrollTop = 1e9; $('#apStatus').innerHTML = statusLine(s); return; }
     shownNeed = needKey;
     $('#apMain').innerHTML = `<div class="card"><div class="row" style="align-items:flex-start"><div style="flex:1"><div class="jt" style="font-size:16px">${esc(s.job.title)}</div><div class="jc">${esc(s.job.company)} · ${plat(s.job.platform)} ${s.resume_id ? `· <a href="#/resume/${s.resume_id}">resume used</a>` : ''}</div></div><div id="apStatus">${statusLine(s)}</div></div>
       ${s.need && s.alive ? `<div class="card" style="margin-top:12px;border-color:var(--warn)"><b>⚠ ${esc(s.need.message)}</b>
         ${s.need.reason === 'questions' ? `<div style="margin-top:8px">${questionForm(s.need.questions || [])}</div><label class="row small muted"><input type="checkbox" id="rem" checked> remember these answers for future applications</label><div class="row" style="margin-top:8px"><button class="btn pri" id="sendA">Fill these & continue</button><button class="btn" data-c2="continue">I typed them in the browser</button><button class="btn" data-c2="skip">Skip job</button></div>`
         : `<div class="row" style="margin-top:10px">${s.need.canSubmit ? '<button class="btn pri" data-c2="submit">✓ Submit for me</button>' : ''}<button class="btn ${s.need.canSubmit ? '' : 'pri'}" data-c2="continue">Continue</button><button class="btn" data-c2="skip">Skip job</button><button class="btn danger" data-c2="stop">Stop</button></div>`}</div>`
-        : s.alive ? `<div class="row" style="margin-top:12px"><button class="btn" data-c2="skip">Skip job</button><button class="btn danger" data-c2="stop">Stop</button></div>` : `<div class="row" style="margin-top:12px"><button class="btn" data-c2="stop">Close browser window</button></div>`}
+        : s.alive ? `<div class="row" style="margin-top:12px">${s.status === 'paused' ? '<button class="btn pri" data-c2="continue">▶ Continue automation</button>' : '<button class="btn" data-c2="pause">⏸ Pause & take over</button>'}<button class="btn" data-c2="skip">Skip job</button><button class="btn danger" data-c2="stop">Stop</button></div>` : `<div class="row" style="margin-top:12px"><button class="btn" data-c2="stop">Close browser window</button></div>`}
       <h3 style="margin-top:16px">Activity</h3><div class="evlog" id="apLog">${esc(evs)}</div></div>`;
     $('#apLog').scrollTop = 1e9;
     $$('[data-c2]').forEach((b) => (b.onclick = async () => {
@@ -633,7 +661,7 @@ VIEWS.apply = async (_, q) => {
     }));
     $('#sendA') && ($('#sendA').onclick = async () => { const answers = {}; $$('[data-fid]').forEach((e) => { if (e.value) answers[e.dataset.fid] = e.value; }); await cmd({ cmd: 'answers', answers, remember: $('#rem').checked }); toast('Answers sent' + ($('#rem').checked ? ' and saved to your answer bank' : ''), 'okk'); shownNeed = null; });
   };
-  const statusLine = (s) => `<span class="pill" style="color:${{ done: 'var(--ok)', needs_input: 'var(--warn)', stopping: 'var(--warn)', skipping: 'var(--warn)', stopped: 'var(--muted)', skipped: 'var(--muted)', running: 'var(--brand2)' }[s.status] || 'var(--muted)'}">${esc(s.status.replace('_', ' '))}</span>`;
+  const statusLine = (s) => `<span class="pill" style="color:${{ done: 'var(--ok)', needs_input: 'var(--warn)', paused: 'var(--info)', stopping: 'var(--warn)', skipping: 'var(--warn)', stopped: 'var(--muted)', skipped: 'var(--muted)', running: 'var(--brand2)' }[s.status] || 'var(--muted)'}">${esc(s.status.replace('_', ' '))}</span>`;
   window.__applyRender(await api('/api/apply/status'));
 };
 

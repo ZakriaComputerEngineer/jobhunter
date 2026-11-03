@@ -129,6 +129,13 @@ class ApplyFlowTests(unittest.TestCase):
         self.assertTrue(any("status='applied'" in call.args[0] and call.args[1][-1] == 654 for call in execute.call_args_list))
         self.assertTrue(any(call.args[0].startswith("INSERT INTO events") and "already applied indicator" in call.args[1][-1] for call in execute.call_args_list))
 
+    def test_pause_and_resume_events_update_session_state(self):
+        session = {"job": {"id": 99}, "status": "running", "events": [], "need": None}
+        applier._event(session, {"type": "paused", "t": 1})
+        self.assertEqual(session["status"], "paused")
+        applier._event(session, {"type": "resumed", "by": "you", "t": 2})
+        self.assertEqual(session["status"], "running")
+
 
 if __name__ == "__main__":
     unittest.main()

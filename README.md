@@ -7,10 +7,13 @@ The apply assistant is intentionally supervised: it fills known fields and pause
 ## Features
 
 - Aggregates and filters job listings in a local dashboard.
+- Uses deterministic, AI-free discovery rules with selectable platforms, regions, domain synonym bags, work modes, seniority, salary, and required-experience bounds.
 - Hides submitted jobs from the active job list and tracks them in the Applications panel.
 - Opens the application flow in the same browser tab through the included extension.
 - Recognizes common job-description-page actions such as **Apply**, **Apply now**, and **Apply for this job** before continuing to the form.
 - Reuses a local profile and learned question/answer bank for repetitive fields.
+- Lets you pause the apply worker, take over in the browser, and continue without ending the job.
+- Refuses to click Next while a fresh page scan still finds empty required fields.
 - Creates a tailored DOCX and, when Word or LibreOffice is available, a PDF.
 - Stops after a detected submission and records the application.
 - Optionally reads Gmail using the `gmail.readonly` scope and applies rule-based statuses such as waiting, action required, interview, rejected, offer, and accepted.
@@ -75,11 +78,15 @@ The OAuth client and tokens are saved only under `data/`. Google may expire refr
 
 ## Job discovery configuration
 
-The current discovery rules are oriented toward Pakistan and remote software/AI roles. Edit `jh/domains.py` and the scraper settings to adapt location aliases, domains, and search terms for another market. Respect each source's robots rules, terms, and rate limits.
+The scraper does not call an AI model. Open **Settings → Job discovery** to choose all enabled platforms, regions, domain synonym bags, remote/hybrid/on-site work, seniority, annual salary bounds, and required years of experience. Search-title keywords remain editable and are combined with the selected domain bags, so related wording in either the title or JD can qualify a listing.
+
+Unknown salary and experience values remain eligible by default because many boards omit them. Enable **Require a stated salary** or **Require stated years of experience** when you want strict filtering. Salary filtering compares only values in the selected currency and does not perform exchange-rate conversion.
+
+The built-in synonym bags live in `jh/discovery.py`. Respect each source's robots rules, terms, and rate limits.
 
 ## Optional AI-assisted tailoring
 
-The core tracker, apply-field reuse, and Gmail status sync work without an AI provider. If you enable an optional provider in the application, enter its key through the local settings UI. Keys must remain in ignored local storage; never place them in source files or commit them.
+The scraper, tracker, apply-field reuse, Gmail status sync, and rule-based resume optimizer work without an AI provider. AI is optional and limited to resume tailoring when you explicitly select a provider in Settings. Keys must remain in ignored local storage; never place them in source files or commit them.
 
 ## Development
 

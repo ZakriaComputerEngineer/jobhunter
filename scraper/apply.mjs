@@ -1,12 +1,12 @@
 // JobHunter apply assistant — drives a VISIBLE Chrome window under your supervision.
 // usage: node apply.mjs <session.json>
 // stdout: one JSON event per line   stdin: one JSON command per line
-//   commands: {"cmd":"continue"} {"cmd":"answers","answers":{"<fid>":"value"}} {"cmd":"submit"} {"cmd":"skip"} {"cmd":"stop"}
+//   commands: {"cmd":"pause"} {"cmd":"continue"} {"cmd":"answers","answers":{"<fid>":"value"}} {"cmd":"submit"} {"cmd":"skip"} {"cmd":"stop"}
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
-import { ALREADY_APPLIED_RX, CLOSED_JOB_RX, shouldPauseRepeatedApply } from './apply_rules.mjs';
+import { ALREADY_APPLIED_RX, CLOSED_JOB_RX, isApplicationForm, requiredEmptyFields, shouldPauseRepeatedApply } from './apply_rules.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 let chromium;
@@ -23,18 +23,21 @@ const jitter = (a, b) => sleep(a + Math.random() * (b - a));
 
 // ---------------- command channel ----------------
 const queue = []; let waiter = null;
-let STOP = false; let SKIP = false;
+let STOP = false; let SKIP = false; let PAUSED = false;
 readline.createInterface({ input: process.stdin }).on('line', (l) => {
   try {
     const c = JSON.parse(l);
     if (c.cmd === 'stop') STOP = true;
     if (c.cmd === 'skip') SKIP = true;
+    if (c.cmd === 'pause') { if (!PAUSED) { PAUSED = true; emit('paused', { message: 'Apply flow paused — you can take over in the browser.' }); } return; }
+    if (c.cmd === 'continue' && PAUSED) { PAUSED = false; emit('resumed', { by: 'you', cmd: 'continue' }); return; }
     if (waiter) { const w = waiter; waiter = null; w(c); }
     else if (!['stop', 'skip'].includes(c.cmd)) queue.push(c);
   } catch {}
 });
 const nextCmd = () => (queue.length ? Promise.resolve(queue.shift()) : new Promise((r) => (waiter = r)));
 let manualSubmitSignal = null;
+async function waitIfPaused() { while (PAUSED && !STOP && !SKIP) await sleep(200); }
 
 // wait for the user; resolves early if autoCheck() becomes true (e.g. captcha solved, logged in)
 async function needUser(reason, message, extra = {}, autoCheck = null) {
@@ -503,6 +506,8 @@ const CONSENT = /agree|consent|acknowledge|privacy|terms|policy|accept|certify|c
 async function fillPage(p, scan, answered) {
   let filled = 0; const unknown = [];
   for (const f of scan.fields) {
+    await waitIfPaused();
+    if (STOP || SKIP) break;
     const key = `${f.frame}:${f.id}`;
     const empty = !f.value || (f.type === 'checkbox' && !f.value);
     if (f.type === 'file') {
@@ -550,6 +555,7 @@ async function main() {
   await jitter(2500, 4000);
   const answered = {}; let lastSig = ''; let same = 0; let clickedApply = false; let blank = 0; let noBtn = 0; let applyClickStreak = 0;
   for (let step = 0; step < 80 && !STOP && !SKIP; step++) {
+    await waitIfPaused();
     const p = page();
     await p.waitForLoadState('domcontentloaded').catch(() => {}); await jitter(1000, 1800);
     const sc = await scanAll(p);
@@ -599,7 +605,9 @@ async function main() {
     // job listing page → find the Apply button
     const applyBtn = sc.buttons.find((b) => APPLY_RX.test(actionText(b.text)) && !/sign in|alert|similar|save/i.test(actionText(b.text)));
     const realFields = sc.fields.filter((f) => !/search|keyword|filter|subscribe|newsletter/i.test(f.label + f.name));
-    if (applyBtn && (realFields.length < 3 || !clickedApply) && !SUBMIT_RX.test(actionText(applyBtn.text).replace(/^apply$/i, 'x'))) {
+    const applicationFormOpen = isApplicationForm(realFields);
+    if (applicationFormOpen && applyClickStreak) log(`Application form detected (${realFields.length} field${realFields.length === 1 ? '' : 's'}) — stopping Apply-button clicks`);
+    if (applyBtn && !applicationFormOpen && !SUBMIT_RX.test(actionText(applyBtn.text).replace(/^apply$/i, 'x'))) {
       if (shouldPauseRepeatedApply(applyClickStreak)) {
         log(`“${applyBtn.text}” did not open an application after ${applyClickStreak} clicks — asking for help`);
         const c = await needUser('stuck', `The “${applyBtn.text}” button keeps returning to the same page. Please open the real application in the browser, then Continue — or Skip this job.`);
@@ -610,6 +618,7 @@ async function main() {
       }
       log(`Clicking “${applyBtn.text}”`); clickedApply = true;
       applyClickStreak++;
+      await waitIfPaused();
       try { await clickBtn(p, applyBtn); } catch (e) { log('apply click failed: ' + e.message.split('\n')[0]); }
       continue;
     }
@@ -618,7 +627,8 @@ async function main() {
     const r = await fillPage(p, sc, answered);
     if (STOP || SKIP) break;
     emit('filled', { count: r.filled, total: sc.fields.length, unknown: r.unknown.length });
-    const sig = sc.url + '|' + sc.fields.map((f) => f.label).join(',');
+    const verified = await scanAll(page());
+    const sig = verified.url + '|' + verified.fields.map((f) => f.label).join(',');
     same = sig === lastSig ? same + 1 : 0; lastSig = sig;
     if (r.unknown.length) {
       const qs = r.unknown.map((f) => ({ fid: f.id, label: f.label, type: f.type, options: f.options || null, required: f.required }));
@@ -631,15 +641,23 @@ async function main() {
       }
       continue;
     }
+    const stillEmpty = requiredEmptyFields(verified.fields);
+    if (stillEmpty.length) {
+      const qs = stillEmpty.map((f) => ({ fid: f.id, label: f.label, type: f.type, options: f.options || null, required: true }));
+      const c = await needUser('questions', `${qs.length} required field(s) are still empty, so I will not click Next. Fill them here or in the browser, then Continue.`, { questions: qs });
+      if (c.cmd === 'skip') { emit('skipped'); return; }
+      if (c.cmd === 'answers') for (const [fid, v] of Object.entries(c.answers || {})) answered[fid] = v;
+      continue;
+    }
     // navigate
-    const nextB = sc.buttons.find((b) => NEXT_RX.test(actionText(b.text)) && !/sign in|log ?in|continue with (google|linkedin|facebook|apple)|subscribe|search/i.test(actionText(b.text)));
-    const subB = sc.buttons.find((b) => SUBMIT_RX.test(actionText(b.text)) && !/search|subscribe/i.test(actionText(b.text)));
+    const nextB = verified.buttons.find((b) => NEXT_RX.test(actionText(b.text)) && !/sign in|log ?in|continue with (google|linkedin|facebook|apple)|subscribe|search/i.test(actionText(b.text)));
+    const subB = verified.buttons.find((b) => SUBMIT_RX.test(actionText(b.text)) && !/search|subscribe/i.test(actionText(b.text)));
     if (same >= 3) {
       const c = await needUser('stuck', 'I seem to be stuck on this page (maybe a validation error or a custom widget). Please fix it in the browser, then Continue.');
       if (c.cmd === 'skip') { emit('skipped'); return; } same = 0; continue;
     }
     if (STOP || SKIP) break;
-    if (nextB) { log(`Clicking “${nextB.text}”`); await clickBtn(p, nextB).catch((e) => log(e.message.split('\n')[0])); continue; }
+    if (nextB) { await waitIfPaused(); if (STOP || SKIP) break; log(`Clicking “${nextB.text}”`); await clickBtn(p, nextB).catch((e) => log(e.message.split('\n')[0])); continue; }
     if (subB) {
       if (/^yes/i.test(P.auto_submit || '')) { log(`Submitting (“${subB.text}”)`); await clickBtn(p, subB); emit('done', { url: sc.url, via: 'automatic submit', button: subB.text }); return; }
       const c = await needUser('review', 'Everything I know is filled in. Please review the form in the browser. Press “Submit for me” here, or submit it yourself in the browser.', { canSubmit: true },

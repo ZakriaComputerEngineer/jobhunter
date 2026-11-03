@@ -36,14 +36,65 @@ async (page) => {
   const fresh = (iso) => !iso || new Date(iso).getTime() >= since;
   const RELEVANT = new RegExp(CFG.relevantRegex || '(\\bai\\b|a\\.i\\.|artificial intelligence|machine learning|\\bml\\b|mlops|llm|genai|generative|deep learning|data scien|computer vision|\\bnlp\\b|natural language|automation engineer|ai automation|agentic|\\bagents?\\b|prompt engineer|applied scien|research engineer|speech|voice ai|rag\\b)', 'i');
   const EXCLUDE = new RegExp(CFG.excludeRegex || '(plc|scada|controls engineer|electrical|mechanical|instrumentation|test automation|qa automation|sdet|quality engineer|quality assurance|\\bqa\\b|tester|sales|account (?:executive|manager)|marketing|recruit|go-to-market|\\bgtm\\b|governance|product manager|project manager|program manager|designer|copywriter|writer|annotat|tutor|trainer|customer success|business development|legal|counsel|accountant|payroll|teacher|lecturer|nurse|physician|\\beditor\\b|videograph|graphic design|content creator)', 'i');
-  const relevant = (title) => RELEVANT.test(title || '') && !EXCLUDE.test(title || '');
+  const DF = CFG.discoveryFilters || {};
+  const BAGS = CFG.filterBags || {};
+  const rx = (source) => { try { return new RegExp(source, 'i'); } catch (e) { return /$a/; } };
+  const bagMatch = (kind, selected, text) => !selected?.length || selected.some((id) => rx((BAGS[kind] || {})[id] || '$a').test(text));
+  const keywordRx = (CFG.keywords || []).filter(Boolean).map((term) => rx(String(term).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '[\\s/-]+')));
+  const customMatch = (text) => keywordRx.some((r) => r.test(text));
+  const relevant = (title, description = '') => {
+    const text = `${title || ''}\n${description || ''}`;
+    return !EXCLUDE.test(title || '') && (RELEVANT.test(text) || customMatch(text));
+  };
+
+  const yearsRequired = (j) => {
+    const text = `${j.experience || ''} ${j.description || ''}`;
+    const m = text.match(/(?:at least|minimum|min\.?|requires?|required|preferred)?\s*(\d{1,2})(?:\s*[-–]\s*\d{1,2})?\+?\s*(?:years?|yrs?)(?:\s+of)?\s+(?:relevant\s+|professional\s+|industry\s+)?experience/i)
+      || text.match(/experience[^.\n]{0,45}?(\d{1,2})(?:\s*[-–]\s*\d{1,2})?\+?\s*(?:years?|yrs?)/i);
+    return m ? +m[1] : null;
+  };
+  const salaryInfo = (value) => {
+    const text = String(value || '');
+    if (!text || /(?:per\s+)?(?:hour|hr|day|week|month)\b/i.test(text)) return null;
+    const currency = /\bPKR\b|\bRs\.?\b/i.test(text) ? 'pkr' : /\bAED\b/i.test(text) ? 'aed' : /\bAUD\b|A\$/i.test(text) ? 'aud'
+      : /\bEUR\b|€/i.test(text) ? 'eur' : /\bGBP\b|£/i.test(text) ? 'gbp' : /\bUSD\b|\$/i.test(text) ? 'usd' : 'any';
+    const nums = [...text.matchAll(/(?:\d[\d,]*(?:\.\d+)?)\s*([kKmM])?/g)].map((m) => {
+      const n = +m[0].replace(/[kKmM,\s]/g, ''); return n * (/k/i.test(m[1] || '') ? 1e3 : /m/i.test(m[1] || '') ? 1e6 : 1);
+    }).filter((n) => Number.isFinite(n) && n > 0);
+    return nums.length ? { min: Math.min(...nums), max: Math.max(...nums), currency } : null;
+  };
+  const passesDiscovery = (j) => {
+    const text = `${j.title || ''}\n${j.description || ''}`;
+    const place = `${j.location || ''} ${j.search_region || ''}`;
+    if (!bagMatch('regions', DF.regions, `${place} ${j.remote ? 'remote worldwide' : ''}`)) return false;
+    if (!bagMatch('domains', DF.domains, text) && !customMatch(text)) return false;
+    const modeText = `${j.title || ''} ${j.description || ''} ${j.location || ''} ${j.job_type || ''}`;
+    const mode = rx((BAGS.work_modes || {}).hybrid || 'hybrid').test(modeText) ? 'hybrid'
+      : j.remote || rx((BAGS.work_modes || {}).remote || 'remote').test(modeText) ? 'remote' : 'onsite';
+    if (DF.work_modes?.length && !DF.work_modes.includes(mode)) return false;
+    const exp = yearsRequired(j);
+    const levelText = `${j.title || ''} ${j.seniority || ''}`;
+    const level = rx((BAGS.seniority || {}).senior || 'senior').test(levelText) || (exp != null && exp >= 6) ? 'senior'
+      : rx((BAGS.seniority || {}).junior || 'junior').test(levelText) || (exp != null && exp <= 2) ? 'junior' : 'mid';
+    if (DF.seniority?.length && !DF.seniority.includes(level)) return false;
+    if (DF.require_experience && exp == null) return false;
+    if (exp != null && (+DF.experience_min || 0) > exp) return false;
+    if (exp != null && (+DF.experience_max || 0) > 0 && exp > +DF.experience_max) return false;
+    const pay = salaryInfo(j.salary);
+    if (DF.require_salary && !pay) return false;
+    if (pay && DF.salary_currency && DF.salary_currency !== 'any' && pay.currency !== 'any' && pay.currency !== DF.salary_currency) return false;
+    if (pay && (+DF.salary_min || 0) > pay.max) return false;
+    if (pay && (+DF.salary_max || 0) > 0 && pay.min > +DF.salary_max) return false;
+    return true;
+  };
 
   const jobs = []; const seen = new Set(); const stats = {};
   const add = (j) => {
     if (!j || !j.title || !j.url) return;
     j.posted = toIso(j.posted);
     if (!fresh(j.posted)) return;
-    if (!relevant(j.title)) return;
+    if (!relevant(j.title, j.description)) return;
+    if (!passesDiscovery(j)) return;
     const key = (j.platform + '|' + (j.ext_id || j.url)).toLowerCase();
     if (seen.has(key)) return; seen.add(key);
     j.description = (j.description || '').slice(0, 20000);
@@ -111,7 +162,7 @@ async (page) => {
     say(`LinkedIn: ${found.length} cards; fetching details`);
     let n = 0; const cap = CFG.linkedinDetailCap || 80;
     for (const j of found) {
-      if (!relevant(j.title) || !fresh(toIso(j.posted))) continue;
+      if (!fresh(toIso(j.posted))) continue;
       if (n++ < cap && !over()) {
         const h = await get(`https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/${j.ext_id}`);
         if (h) {

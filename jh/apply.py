@@ -79,6 +79,8 @@ def _event(sess, ev):
         sess["events"] = sess["events"][-400:]
         if t == "needs_input":
             sess.update(status="needs_input", need=ev, need_since=_now())
+        elif t == "paused":
+            sess.update(status="paused", need=None)
         elif t == "resumed":
             sess.update(status="running", need=None)
         elif t == "stop_requested":
@@ -138,7 +140,7 @@ def _reader(sess, proc):
             sess["status"] = "skipped"
         elif sess["status"] == "stopping":
             sess["status"] = "stopped"
-        elif sess["status"] in ("running", "starting", "needs_input"):
+        elif sess["status"] in ("running", "starting", "needs_input", "paused"):
             sess["status"] = "ended"
     _finish(sess)
 

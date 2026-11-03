@@ -1,12 +1,27 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { ALREADY_APPLIED_RX, CLOSED_JOB_RX, shouldPauseRepeatedApply } from '../scraper/apply_rules.mjs';
+import { ALREADY_APPLIED_RX, CLOSED_JOB_RX, isApplicationForm, requiredEmptyFields, shouldPauseRepeatedApply } from '../scraper/apply_rules.mjs';
 
 test('limits repeated Apply clicks before asking the user for help', () => {
   assert.equal(shouldPauseRepeatedApply(0), false);
   assert.equal(shouldPauseRepeatedApply(1), false);
   assert.equal(shouldPauseRepeatedApply(2), true);
+});
+
+test('recognizes an opened application form from even one candidate field', () => {
+  assert.equal(isApplicationForm([{ label: 'Upload your resume', name: 'resume', type: 'file', required: false }]), true);
+  assert.equal(isApplicationForm([{ label: 'Email address', name: 'email', type: 'email', required: true }]), true);
+  assert.equal(isApplicationForm([{ label: 'Search jobs', name: 'q', type: 'text', required: true }]), false);
+});
+
+test('blocks navigation while required values remain empty', () => {
+  const missing = requiredEmptyFields([
+    { label: 'Name', required: true, value: '' },
+    { label: 'Country', required: true, value: 'Pakistan' },
+    { label: 'Optional note', required: false, value: '' },
+  ]);
+  assert.deepEqual(missing.map((x) => x.label), ['Name']);
 });
 
 test('recognizes already-applied controls without confusing Apply actions', () => {

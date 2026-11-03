@@ -5,7 +5,7 @@ from flask import Flask, jsonify, request, send_file, send_from_directory, Respo
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from jh import exthub  # noqa: E402
-from jh import db, domains, ingest, profile, scraper, tailor, ats, render, apply as applier, applyprofile, gmail_sync  # noqa: E402
+from jh import db, domains, ingest, profile, scraper, tailor, ats, render, apply as applier, applyprofile, gmail_sync, discovery  # noqa: E402
 
 app = Flask(__name__, static_folder=None)
 WEB = os.path.join(db.ROOT, "web")
@@ -400,6 +400,7 @@ def get_settings():
     if s["llm"].get("api_key"):
         s["llm"]["api_key_set"] = True
         s["llm"]["api_key"] = "••••" + s["llm"]["api_key"][-4:]
+    s["discovery_options"] = discovery.options()
     return jsonify(s)
 
 

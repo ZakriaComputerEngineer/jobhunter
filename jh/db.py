@@ -1,5 +1,6 @@
 import json, os, sqlite3, threading
 from contextlib import contextmanager
+from . import discovery
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA = os.path.join(ROOT, "data")
@@ -126,6 +127,7 @@ DEFAULTS = {
     "relocation": ["Australia", "Europe"],      # where you'd relocate (with sponsorship); Pakistan is always home
     "eligibility_view": "ok",                    # ok = eligible + maybe, eligible = strict, all = everything
     "preferred_countries": ["Pakistan", "Remote", "Australia", "Germany", "Netherlands", "United Kingdom", "United Arab Emirates"],
+    "discovery_filters": discovery.default_filters(),
 }
 
 
@@ -137,6 +139,7 @@ def settings():
             s.update(json.load(open(SETTINGS_PATH, encoding="utf-8")))
         except Exception:
             pass
+    s["discovery_filters"] = discovery.normalize(s.get("discovery_filters"))
     return s
 
 

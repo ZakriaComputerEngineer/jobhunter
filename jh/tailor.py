@@ -217,6 +217,7 @@ def rule_based(base, job, truth_sk):
         if norm(p) not in keys:
             keys.add(norm(p)); out.append(p)
     phrases = out
+    summary_updated = False
     for s in c["sections"]:
         if re.search(r"skill", s["heading"], re.I):
             bl = [b for b in s["blocks"] if b["t"] == "bullet"]
@@ -237,9 +238,15 @@ def rule_based(base, job, truth_sk):
                     first = b["text"].split(" with ")[0] if " with " in b["text"][:80] else ""
                     if first and len(first) < 60:
                         b["text"] = b["text"].replace(first, title, 1)
+                    if phrases:
+                        skill_line = "JD-matched strengths: " + ", ".join(phrases[:8]) + "."
+                        if skill_line.lower() not in b["text"].lower():
+                            b["text"] = b["text"].rstrip() + " " + skill_line
+                        summary_updated = True
                     break
     gaps = sorted(req - truth_sk)
-    return c, {"gaps": gaps, "notes": f"Rule-based: title mirrored; {len(phrases)} JD keywords you have added verbatim in a Key Skills line"
+    return c, {"gaps": gaps, "notes": f"Rule-based: title mirrored; {len(phrases)} verified JD keywords added to the skills section"
+                                     + (" and summary" if summary_updated else "")
                                      + (f"; {len(gaps)} JD skills not in your CVs left out (add them to your skills bank if you have them)." if gaps else ".")}
 
 

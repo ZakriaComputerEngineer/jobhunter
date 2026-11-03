@@ -2,7 +2,7 @@
 Also writes ready-to-run copies of the scraper into the Playwright-MCP folder for Claude's scheduled task."""
 import json, os, shutil, subprocess, threading, time
 from datetime import datetime
-from . import db, ingest
+from . import db, ingest, discovery
 
 SCRAPER_DIR = os.path.join(db.ROOT, "scraper")
 STATE = {"running": False, "log": [], "started": None, "finished": None, "result": None, "platforms": None}
@@ -65,6 +65,7 @@ def _minify(js):
 
 def scraper_config():
     s = db.settings()
+    discovery_filters, filter_bags = discovery.scraper_payload(s.get("discovery_filters"))
     return {
         "days": s["days"], "keywords": s["keywords"], "remoteKeywords": s["remote_keywords"],
         "linkedinLocations": s["linkedin_locations"], "linkedinExperience": s["linkedin_experience"],
@@ -72,6 +73,7 @@ def scraper_config():
         "glassdoorLocations": s["glassdoor_locations"], "baytRegions": s["bayt_regions"],
         "companyBoards": s["company_boards"], "platforms": s["platforms"], "delays": s["delays"],
         "headless": s["headless"], "browser_channel": s["browser_channel"], "timezone": "Asia/Karachi",
+        "discoveryFilters": discovery_filters, "filterBags": filter_bags,
     }
 
 

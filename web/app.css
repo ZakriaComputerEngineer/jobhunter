@@ -154,13 +154,28 @@ textarea.inp{width:100%;resize:vertical;font-family:var(--font);line-height:1.5}
 .cmdk .box{width:min(620px,92vw);background:var(--bg2);border:1px solid var(--line2);border-radius:14px;box-shadow:var(--shadow);overflow:hidden;height:fit-content}
 .cmdk input{width:100%;border:0;border-bottom:1px solid var(--line);background:transparent;padding:15px 18px;font-size:16px;outline:0}
 .cmdk .it{padding:10px 18px;cursor:pointer;display:flex;gap:10px;align-items:center} .cmdk .it.on,.cmdk .it:hover{background:var(--panel)}
-.setgrid{display:grid;grid-template-columns:220px 1fr;gap:12px 18px;align-items:start}
+.settings-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+.setgrid{display:grid;grid-template-columns:minmax(140px,220px) minmax(0,1fr);gap:12px 18px;align-items:start}
+.setgrid .inp{min-width:0;max-width:100%;width:100%}
 .setgrid label{color:var(--muted);padding-top:7px;font-size:13px}
+.plain{text-transform:none;letter-spacing:0;font-weight:500}
+.discovery-card{grid-column:1/-1}
+.discovery-summary{border-left:3px solid var(--brand);background:var(--panel2);padding:9px 12px;border-radius:0 8px 8px 0;color:var(--brand2);font-weight:600;margin-bottom:14px}
+.discovery-section{padding:12px 0;border-top:1px solid var(--line)}
+.discovery-section h4{margin:0 0 8px;font-size:12px;color:var(--muted);font-weight:650}
+.choice-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:7px}
+.choice{display:flex;align-items:center;gap:8px;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);cursor:pointer;color:var(--text)!important}
+.choice:has(input:checked){border-color:color-mix(in srgb,var(--brand) 60%,var(--line));background:color-mix(in srgb,var(--brand) 10%,var(--panel2))}
+.choice.inline{width:auto;padding:6px 9px}
+.discovery-split{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.range-grid{display:grid;grid-template-columns:repeat(5,minmax(130px,1fr));gap:10px;padding:12px 0;border-top:1px solid var(--line)}
+.range-grid label{display:block;color:var(--muted);font-size:12px;margin-bottom:5px}.range-grid .inp{width:100%}
 .tgl{position:relative;width:38px;height:22px;display:inline-block} .tgl input{display:none}
 .tgl span{position:absolute;inset:0;background:var(--line2);border-radius:20px;transition:.2s;cursor:pointer}
 .tgl span::after{content:'';position:absolute;width:16px;height:16px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s}
 .tgl input:checked+span{background:var(--brand)} .tgl input:checked+span::after{transform:translateX(16px)}
 @media (max-width:1100px){.g4{grid-template-columns:repeat(2,1fr)}.split{grid-template-columns:1fr;height:auto}.pdf{height:80vh}}
+@media (max-width:800px){.settings-grid,.discovery-split{grid-template-columns:1fr}.range-grid{grid-template-columns:repeat(2,1fr)}.setgrid{grid-template-columns:1fr}.setgrid label{padding-top:2px}}
 
 /* apply assistant */
 #applyBar .ab{display:flex;align-items:center;gap:12px;padding:10px 22px;border-bottom:1px solid var(--line);background:color-mix(in srgb,var(--warn) 14%,var(--bg2));animation:fade .2s}
